@@ -95,26 +95,7 @@ public sealed class FirebasePushSender : IPushSender
         if (_messaging is null) return new PushSendResult(PushSendOutcome.Failed, "Firebase nie jest skonfigurowany.");
         try
         {
-            await _messaging.SendAsync(new Message
-            {
-                // FirebaseAdmin 3.7 oznacza Message.Token jako [Obsolete] na rzecz Fid, ale FCM HTTP v1 nadal adresuje
-                // urządzenie tokenem rejestracyjnym z aplikacji (FirebaseMessaging.Instance.GetToken) — Fid to inny
-                // identyfikator (instalacji). Zostajemy przy Token, zgodnie ze scenariuszem szkolenia.
-#pragma warning disable CS0618
-                Token = token,
-#pragma warning restore CS0618
-                Notification = new Notification { Title = message.Title, Body = message.Body },
-                Data = new Dictionary<string, string>
-                {
-                    ["type"] = message.Type,
-                    ["reportId"] = message.ReportId.ToString()
-                },
-                Android = new AndroidConfig
-                {
-                    Priority = Priority.High,
-                    Notification = new AndroidNotification { ChannelId = PushTypes.AndroidChannelId }
-                }
-            }, ct);
+            await _messaging.SendAsync(BuildMessage(token, message, DateTime.UtcNow), ct);
             return new PushSendResult(PushSendOutcome.Sent);
         }
         catch (FirebaseMessagingException ex) when (IsDeadToken(ex))
@@ -133,6 +114,36 @@ public sealed class FirebasePushSender : IPushSender
             return new PushSendResult(PushSendOutcome.Failed, ex.Message);
         }
     }
+
+    /// <summary>
+    /// Wiadomość FCM: notification (tytuł/treść), data (<c>type</c>, <c>reportId</c>), Android: priorytet wysoki,
+    /// kanał <c>reports</c> i <c>EventTimestamp</c> = czas wysłania. Bez tego Admin SDK wysyła
+    /// <c>event_time = 0001-01-01T00:00:00Z</c> (DateTime.MinValue) i zasobnik Androida pokazuje „2032y” (QA-A06).
+    /// </summary>
+    internal static Message BuildMessage(string token, PushMessage message, DateTime utcNow) => new()
+    {
+        // FirebaseAdmin 3.7 oznacza Message.Token jako [Obsolete] na rzecz Fid, ale FCM HTTP v1 nadal adresuje
+        // urządzenie tokenem rejestracyjnym z aplikacji (FirebaseMessaging.Instance.GetToken) — Fid to inny
+        // identyfikator (instalacji). Zostajemy przy Token, zgodnie ze scenariuszem szkolenia.
+#pragma warning disable CS0618
+        Token = token,
+#pragma warning restore CS0618
+        Notification = new Notification { Title = message.Title, Body = message.Body },
+        Data = new Dictionary<string, string>
+        {
+            ["type"] = message.Type,
+            ["reportId"] = message.ReportId.ToString()
+        },
+        Android = new AndroidConfig
+        {
+            Priority = Priority.High,
+            Notification = new AndroidNotification
+            {
+                ChannelId = PushTypes.AndroidChannelId,
+                EventTimestamp = DateTime.SpecifyKind(utcNow, DateTimeKind.Utc)
+            }
+        }
+    };
 
     /// <summary>
     /// <c>Unregistered</c> (token wygasł / aplikację odinstalowano), <c>SenderIdMismatch</c> (token z innego projektu)
