@@ -1,0 +1,52 @@
+name: deploy
+
+# Wdrożenie na MyDevil (https://szkolenia.strefakodera.pl/maui/podstawowe). Ręczny start (Actions → deploy →
+# Run workflow), tylko z main. Build + testy tutaj; na host trafia wyłącznie artefakt `dotnet publish`
+# (framework-dependent, bez RID — host FreeBSD ma własny runtime .NET 9 w /usr/local/bin/dotnet).
+on:
+  workflow_dispatch:
+
+concurrency: deploy-mydevil
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — ref must be main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "deploy runs from main; got ${{ github.ref }}." >&2
+          exit 1
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Test
+        run: dotnet test FieldReport.Api.sln -c Release
+
+      - name: Publish (framework-dependent, portable)
+        run: dotnet publish src/FieldReport.Api/FieldReport.Api.csproj -c Release -o artifacts/publish --nologo
+
+      - name: SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.MYDEVIL_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Deploy
+        run: bash deploy/mydevil/deploy.sh
+        env:
+          MYDEVIL_HOST: ${{ secrets.MYDEVIL_HOST }}
+          MYDEVIL_USER: ${{ secrets.MYDEVIL_USER }}
+          MYDEVIL_SSH_PORT: ${{ secrets.MYDEVIL_SSH_PORT }}
+          PUBLISH_DIR: artifacts/publish
+
+      # Opcjonalny sekret FIELDREPORT_ADMIN_KEY (= Admin__Key z env na serwerze): smoke usuwa po sobie technika
+      # testowego. Bez niego technik smoke.*@example.com zostaje w danych (dyspozytor „do wszystkich” też go obejmie).
+      - name: Smoke (publicznie)
+        run: bash scripts/smoke.sh https://szkolenia.strefakodera.pl/maui/podstawowe
+        env:
+          ADMIN_KEY: ${{ secrets.FIELDREPORT_ADMIN_KEY }}
