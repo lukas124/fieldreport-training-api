@@ -25,11 +25,12 @@ public sealed class ReportDto
     /// <example>3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f</example>
     public Guid Id { get; set; }
 
-    /// <summary>Tytuł (3–80 znaków).</summary>
+    /// <summary>Tytuł (3–80 znaków po obcięciu spacji/nowych linii z brzegów — walidowany i zapisywany po Trim).</summary>
     /// <example>Awaria pompy</example>
     [Required(ErrorMessage = "Tytuł jest wymagany.")]
     [StringLength(80, MinimumLength = 3, ErrorMessage = "Tytuł musi mieć od 3 do 80 znaków.")]
-    public string Title { get; set; } = "";
+    public string Title { get => _title; set => _title = value?.Trim() ?? ""; }
+    private string _title = "";
 
     /// <summary>Opis (opcjonalny, maks. 500 znaków).</summary>
     /// <example>Pompa w węźle C2 nie startuje, słychać buczenie.</example>
@@ -40,7 +41,10 @@ public sealed class ReportDto
     /// <example>High</example>
     public ReportPriority Priority { get; set; } = ReportPriority.Normal;
 
-    /// <summary>Status: New / InProgress / Done.</summary>
+    /// <summary>
+    /// Status: New / InProgress / Done. Serwer NIE pilnuje kolejności (reguła „tylko do przodu” jest w aplikacji);
+    /// zapisuje stan z urządzenia, a dyspozytor może ustawić dowolny — przy pobraniu status może być „cofnięty”.
+    /// </summary>
     /// <example>New</example>
     public ReportStatus Status { get; set; } = ReportStatus.New;
 
@@ -133,11 +137,12 @@ public sealed class DispatcherCreateReportRequest
     /// <example>jan.kowalski@firma.pl</example>
     public string? TechnicianEmail { get; set; }
 
-    /// <summary>Tytuł (3–80 znaków).</summary>
+    /// <summary>Tytuł (3–80 znaków po obcięciu spacji/nowych linii z brzegów — walidowany i zapisywany po Trim).</summary>
     /// <example>Awaria pompy</example>
     [Required(ErrorMessage = "Tytuł jest wymagany.")]
     [StringLength(80, MinimumLength = 3, ErrorMessage = "Tytuł musi mieć od 3 do 80 znaków.")]
-    public string Title { get; set; } = "";
+    public string Title { get => _title; set => _title = value?.Trim() ?? ""; }
+    private string _title = "";
 
     /// <summary>Opis (opcjonalny, maks. 500 znaków).</summary>
     /// <example>Klient zgłasza wyciek w kotłowni, budynek B.</example>

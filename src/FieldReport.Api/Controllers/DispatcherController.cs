@@ -80,7 +80,7 @@ public sealed class DispatcherController(DataStore store, PushService push, IOpt
 
     /// <summary>Zmiana statusu zgłoszenia + push <c>report_status_changed</c>.</summary>
     /// <remarks>
-    /// Dyspozytor może ustawić dowolny status (bez reguły przejść z aplikacji). Push: „Dyspozytor zmienił status” / tytuł,
+    /// Dyspozytor może ustawić dowolny status (serwer celowo nie pilnuje kolejności — aplikacja musi obsłużyć „cofnięty” status). Push: „Dyspozytor zmienił status” / tytuł,
     /// data `{ "type": "report_status_changed", "reportId": "…" }`. Identyfikator weź z aplikacji albo z `GET /api/dispatcher/reports`.
     ///
     ///     PATCH /api/dispatcher/reports/3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f/status
@@ -88,25 +88,35 @@ public sealed class DispatcherController(DataStore store, PushService push, IOpt
     /// </remarks>
     /// <param name="id" example="3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f">Identyfikator zgłoszenia.</param>
     /// <param name="request">Nowy status.</param>
+    /// <param name="technicianEmail" example="jan.kowalski@firma.pl">Technik — wymagany tylko, gdy to samo id ma kilku techników (inaczej 409).</param>
     /// <param name="dispatcherKey">Wymagany tylko, gdy serwer ma ustawiony <c>Dispatcher:Key</c>.</param>
     /// <param name="ct">Anulowanie.</param>
     /// <response code="200">Zmienione zgłoszenie i wynik wysyłki push.</response>
     /// <response code="404">Brak zgłoszenia.</response>
+    /// <response code="409">To samo id ma kilku techników — podaj technicianEmail.</response>
     [HttpPatch("reports/{id:guid}/status")]
     [ProducesResponseType<DispatcherResult>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<DispatcherResult>> ChangeStatus(
         Guid id,
         [FromBody] DispatcherStatusRequest request,
+        [FromQuery] string? technicianEmail,
         [FromHeader(Name = KeyHeader)] string? dispatcherKey,
         CancellationToken ct)
     {
         if (CheckKey(dispatcherKey) is { } denied) return denied;
 
         var matches = store.FindById(id);
+        if (!string.IsNullOrWhiteSpace(technicianEmail))
+            matches = matches.Where(m => m.Email == DataStore.Normalize(technicianEmail)).ToList();
         if (matches.Count == 0)
-            return Problem(title: "Nie znaleziono", detail: "Brak zgłoszenia o tym id.", statusCode: StatusCodes.Status404NotFound);
+            return Problem(title: "Nie znaleziono", detail: "Brak zgłoszenia o tym id (u wskazanego technika).", statusCode: StatusCodes.Status404NotFound);
+        if (matches.Count > 1)
+            return Problem(title: "Niejednoznaczne id",
+                detail: $"To id ma {matches.Count} techników — podaj ?technicianEmail=… (GET /api/dispatcher/reports pokaże, kto).",
+                statusCode: StatusCodes.Status409Conflict);
 
         var result = new DispatcherResult();
         var targets = new List<(string, PushMessage)>();

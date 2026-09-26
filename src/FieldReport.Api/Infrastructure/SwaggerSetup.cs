@@ -95,7 +95,9 @@ public static class SwaggerSetup
             }
             else if (context.Type == typeof(ReportStatus))
             {
-                schema.Description = "Status: `New` = Nowe, `InProgress` = W trakcie, `Done` = Zakończone.";
+                schema.Description = "Status: `New` = Nowe, `InProgress` = W trakcie, `Done` = Zakończone. " +
+                                     "Serwer NIE pilnuje kolejności (reguła „tylko do przodu” jest w aplikacji; dyspozytor może ustawić dowolny) — " +
+                                     "pobrany status może być „cofnięty”.";
                 schema.Example = new OpenApiString("New");
             }
         }

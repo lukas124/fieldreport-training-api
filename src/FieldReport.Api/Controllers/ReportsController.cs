@@ -53,7 +53,8 @@ public sealed class ReportsController(DataStore store, IOptions<StorageOptions> 
     /// <remarks>
     /// Ponowienie tego samego `PUT` nie tworzy duplikatu — ten sam `id` zawsze nadpisuje ten sam rekord.
     /// `id` w treści musi być równe `id` z adresu (albo puste). Serwer ustawia `updatedAt`, `hasPhoto` i `photoUrl`;
-    /// `createdAt` jest brany z pierwszego zapisu.
+    /// `createdAt` jest brany z pierwszego zapisu. Tytuł jest przycinany (Trim) przed walidacją 3–80 znaków.
+    /// Status: serwer NIE pilnuje kolejności przejść — zapisuje stan z urządzenia (reguła „tylko do przodu” jest w aplikacji).
     ///
     ///     PUT /api/reports/3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f
     ///     { "id": "3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f", "title": "Awaria pompy", "description": "Nie startuje",
@@ -108,7 +109,6 @@ public sealed class ReportsController(DataStore store, IOptions<StorageOptions> 
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status415UnsupportedMediaType)]
     public async Task<ActionResult<ReportDto>> UploadPhoto(Guid id, IFormFile? photo, CancellationToken ct)
     {
-        photo ??= Request.HasFormContentType ? Request.Form.Files.FirstOrDefault() : null; // tolerancja innej nazwy pola
         if (photo is null || photo.Length == 0)
             return Problem(title: "Brak pliku", detail: "Wyślij zdjęcie jako multipart/form-data w polu 'photo'.", statusCode: StatusCodes.Status400BadRequest);
         if (photo.Length > storage.Value.MaxPhotoBytes)

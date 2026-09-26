@@ -28,7 +28,7 @@ public sealed class AuthController(TokenService tokens, DataStore store, IOption
     /// </remarks>
     /// <response code="200">Zalogowano — tokeny i imię technika.</response>
     /// <response code="401">Nieprawidłowy e-mail lub PIN.</response>
-    /// <response code="429">Za dużo prób — spróbuj za chwilę.</response>
+    /// <response code="429">Za dużo prób z tego adresu IP (limit `RateLimiting:AuthPermitsPerMinute`, domyślnie 30/min; na serwerze szkoleniowym 200/min).</response>
     [HttpPost("login")]
     [ProducesResponseType<TokenResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
@@ -36,7 +36,7 @@ public sealed class AuthController(TokenService tokens, DataStore store, IOption
     public ActionResult<TokenResponse> Login([FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] LoginRequest? request)
     {
         var email = request?.Email?.Trim();
-        if (!Technicians.IsValidEmail(email) || request?.Pin?.Trim() != options.CurrentValue.Pin)
+        if (!Technicians.IsValidEmail(email) || request?.Pin != options.CurrentValue.Pin /* dokładnie, bez przycinania */)
         {
             return Problem(title: "Nieprawidłowy e-mail lub PIN", detail: "Podaj poprawny adres e-mail i PIN 1234.",
                 statusCode: StatusCodes.Status401Unauthorized);
