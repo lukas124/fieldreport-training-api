@@ -13,6 +13,11 @@
     <NoWarn>$(NoWarn);1591</NoWarn>
     <InvariantGlobalization>false</InvariantGlobalization>
     <UserSecretsId>fieldreport-api-szkolenie</UserSecretsId>
+    <!-- artefakt przenośny (framework-dependent, bez RID): uruchamiany przez `dotnet FieldReport.Api.dll`,
+         więc bez natywnego launchera platformy budującej (macOS/Linux) — na FreeBSD i tak by nie działał -->
+    <UseAppHost>false</UseAppHost>
+    <!-- mały proces na współdzielonym hoście -->
+    <ServerGarbageCollector>false</ServerGarbageCollector>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,7 +30,8 @@
     <!-- lokalne dane i skrypty nie trafiają do publikacji -->
     <Content Remove="data/**" />
     <None Remove="data/**" />
-    <None Include="scripts/**" CopyToPublishDirectory="Never" />
+    <!-- ustawienia deweloperskie (m.in. dev-admin-key) nie trafiają na serwer -->
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
   <ItemGroup>

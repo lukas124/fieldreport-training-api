@@ -1,7 +1,8 @@
 #!/bin/sh
 # Sterowanie procesem FieldReport API na MyDevil (FreeBSD, bez systemd/Passengera).
 #
-#   run.sh start|stop|restart|status|health|watchdog
+#   sh run.sh start|stop|restart|status|health|watchdog
+#   (przez `sh` — MyDevil nie wykonuje plików z $HOME bez `devil binexec on`)
 #
 # Układ ($APP_ROOT = ~/apps/fieldreport-api):
 #   app/                  artefakt `dotnet publish` (jedyny katalog czyszczony przez deploy: rsync --delete)
@@ -102,7 +103,7 @@ stop() {
 status() {
   if is_running; then
     echo "Działa: pid $(pid), port $(port), health: $(healthy && echo OK || echo BRAK)"
-    ps -p "$(pid)" -o pid=,rss=,etime=,command= 2>/dev/null || true
+    ps -p "$(pid)" -o pid= -o rss= -o etime= -o command= 2>/dev/null || true   # FreeBSD: osobne -o
   else
     echo "Nie działa."
     return 3
@@ -132,5 +133,5 @@ case "${1:-}" in
   status) status ;;
   health) /usr/local/bin/curl -fsS -m 5 "$(health_url)"; echo ;;
   watchdog) watchdog ;;
-  *) echo "użycie: $0 start|stop|restart|status|health|watchdog" >&2; exit 2 ;;
+  *) echo "użycie: sh $0 start|stop|restart|status|health|watchdog" >&2; exit 2 ;;
 esac

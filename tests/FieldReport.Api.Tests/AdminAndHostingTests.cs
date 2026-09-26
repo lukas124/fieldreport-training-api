@@ -90,6 +90,14 @@ public sealed class HostingTests
     }
 
     [Test]
+    public async Task Health_answers_head_requests()
+    {
+        using var factory = new ApiFactory();
+        var response = await factory.CreateClient().SendAsync(new HttpRequestMessage(HttpMethod.Head, "api/health"));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    [Test]
     public async Task PathBase_serves_api_under_prefix()
     {
         using var factory = new ApiFactory(new() { ["PathBase"] = Prefix + "/" });

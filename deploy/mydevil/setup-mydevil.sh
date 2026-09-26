@@ -5,6 +5,8 @@
 #   rsync -a deploy/mydevil/ mydevil:apps/fieldreport-api/bin/
 #   ssh mydevil sh apps/fieldreport-api/bin/setup-mydevil.sh
 #
+# Skrypty zawsze przez `sh`: MyDevil nie wykonuje plików z $HOME bez `devil binexec on` (nie włączamy).
+#
 # Konto jest współdzielone z blogiem (strefakodera.pl, beta., wp.) — skrypt dotyka WYŁĄCZNIE:
 #   ~/apps/fieldreport-api/**, strony $DOMAIN, portu z opisem „fieldreport-api” i WŁASNYCH linii crona
 #   (dopisuje, niczego nie usuwa ani nie przestawia).
@@ -18,7 +20,7 @@ WEB_IP="${WEB_IP:-185.36.169.6}"          # WEB IP konta (web88), nie IP węzła
 PORT_DESC="fieldreport-api"
 APP_ROOT="$HOME/apps/fieldreport-api"
 ENV_FILE="$APP_ROOT/fieldreport-api.env"
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TEMPLATE="$HERE/env.template"
 RUN="$APP_ROOT/bin/run.sh"
 
@@ -28,11 +30,11 @@ strip() { sed "s/${ESC}\[[0-9;]*m//g"; }   # devil koloruje wyjście (kody ANSI)
 echo "== katalogi w $APP_ROOT"
 mkdir -p "$APP_ROOT/app" "$APP_ROOT/data" "$APP_ROOT/secrets" "$APP_ROOT/logs" "$APP_ROOT/run" "$APP_ROOT/bin"
 chmod 700 "$APP_ROOT/secrets" "$APP_ROOT/data"
-if [ "$HERE" != "$APP_ROOT/bin" ]; then
+if [ "$HERE" != "$(cd "$APP_ROOT/bin" && pwd -P)" ]; then   # $HOME bywa symlinkiem (/home → /usr/home)
   cp "$HERE/run.sh" "$HERE/env.template" "$APP_ROOT/bin/"
   cp "$0" "$APP_ROOT/bin/setup-mydevil.sh" 2>/dev/null || true
 fi
-chmod +x "$RUN"
+chmod +x "$RUN" 2>/dev/null || true
 
 echo "== port"
 PORT=""
@@ -75,21 +77,21 @@ else
 fi
 chmod 600 "$ENV_FILE"
 
-echo "== cron (dopisuję brakujące własne linie; cudzych nie ruszam)"
-CRON_BOOT="@reboot $RUN start >/dev/null 2>&1"
-CRON_DOG="*/5 * * * * $RUN watchdog >/dev/null 2>&1"
+echo "== cron (tylko WŁASNE linie — z $RUN; cudzych nie ruszam)"
+# /bin/sh jawnie: MyDevil nie pozwala wykonywać plików z $HOME bez `devil binexec on` (tego nie włączamy)
+CRON_BOOT="@reboot /bin/sh $RUN start >/dev/null 2>&1"
+CRON_DOG="*/5 * * * * /bin/sh $RUN watchdog >/dev/null 2>&1"
 CURRENT="$(crontab -l 2>/dev/null || true)"
-ADD=""
-printf '%s\n' "$CURRENT" | grep -qxF "$CRON_BOOT" || ADD="$CRON_BOOT"
-if ! printf '%s\n' "$CURRENT" | grep -qxF "$CRON_DOG"; then
-  ADD="${ADD:+$ADD
-}$CRON_DOG"
-fi
-if [ -n "$ADD" ]; then
-  { [ -n "$CURRENT" ] && printf '%s\n' "$CURRENT"; printf '%s\n' "$ADD"; } | crontab -
-  echo "   dopisano:"; printf '     %s\n' "$ADD"
-else
+# nasze linie w starszej postaci (np. bez /bin/sh) zastępujemy; każda inna linia zostaje bajt w bajt
+KEEP="$(printf '%s\n' "$CURRENT" | grep -vF "$RUN " || true)"
+OURS_NOW="$(printf '%s\n' "$CURRENT" | grep -F "$RUN " || true)"
+WANT="$CRON_BOOT
+$CRON_DOG"
+if [ "$OURS_NOW" = "$WANT" ]; then
   echo "   linie już są"
+else
+  { [ -n "$KEEP" ] && printf '%s\n' "$KEEP"; printf '%s\n' "$WANT"; } | crontab -
+  echo "   ustawiono:"; printf '     %s\n' "$CRON_BOOT" "$CRON_DOG"
 fi
 
 echo "== SSL Let's Encrypt przez MyDevil ($WEB_IP, SNI $DOMAIN)"

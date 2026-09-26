@@ -45,17 +45,16 @@ echo "== host: $REMOTE"
 echo "== skrypty → ~/$REMOTE_ROOT/bin/"
 rsync -az -e "$RSYNC_SSH" "$ROOT/deploy/mydevil/run.sh" "$ROOT/deploy/mydevil/setup-mydevil.sh" \
   "$ROOT/deploy/mydevil/env.template" "$REMOTE:$REMOTE_ROOT/bin/"
-"${SSH[@]}" "$REMOTE" "chmod +x $REMOTE_ROOT/bin/run.sh"
 
 echo "== rsync artefaktu → ~/$REMOTE_APP"
 rsync -az --delete --delay-updates -e "$RSYNC_SSH" "$PUBLISH_DIR/" "$REMOTE:$REMOTE_APP"
 
 echo "== restart"
-"${SSH[@]}" "$REMOTE" "$REMOTE_ROOT/bin/run.sh restart"
+"${SSH[@]}" "$REMOTE" "/bin/sh $REMOTE_ROOT/bin/run.sh restart"
 
 echo "== smoke (health na hoście)"
 for i in 1 2 3 4 5; do
-  if OUT="$("${SSH[@]}" "$REMOTE" "$REMOTE_ROOT/bin/run.sh health")"; then
+  if OUT="$("${SSH[@]}" "$REMOTE" "/bin/sh $REMOTE_ROOT/bin/run.sh health")"; then
     echo "$OUT"
     echo "Done."
     exit 0

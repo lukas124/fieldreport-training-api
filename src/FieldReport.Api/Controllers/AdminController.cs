@@ -62,6 +62,7 @@ public sealed class HealthController(IPushSender push, IOptionsMonitor<AuthOptio
     /// <summary>Wersja, czas serwera i czy Firebase jest skonfigurowany.</summary>
     /// <response code="200">Usługa działa.</response>
     [HttpGet]
+    [HttpHead] // monitory dostępności i `curl -I`
     [ProducesResponseType<HealthDto>(StatusCodes.Status200OK)]
     public ActionResult<HealthDto> Get() => new HealthDto
     {

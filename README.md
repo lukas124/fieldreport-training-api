@@ -83,13 +83,14 @@ Układ na hoście:
 ```
 ~/apps/fieldreport-api/
   app/                   artefakt (JEDYNY katalog czyszczony przez deploy: rsync --delete)
-  bin/run.sh             start|stop|restart|status|health|watchdog (+ setup-mydevil.sh, env.template)
+  bin/run.sh             sh run.sh start|stop|restart|status|health|watchdog (+ setup-mydevil.sh, env.template)
+                         (zawsze przez `sh`: MyDevil nie wykonuje plików z $HOME bez `devil binexec on`)
   fieldreport-api.env    konfiguracja, chmod 600 (port, PathBase, Admin__Key, GOOGLE_APPLICATION_CREDENTIALS)
   data/                  data.json, zdjęcia, klucz podpisu JWT
   secrets/firebase-sa.json   klucz konta serwisowego (wgrywany ręcznie)
   logs/api.log           log (rotacja 10 MB × 5)
   run/api.pid
-cron: @reboot run.sh start  |  */5 * * * * run.sh watchdog  (start gdy nie działa, restart gdy 2× brak health)
+cron: @reboot sh run.sh start  |  */5 * * * * sh run.sh watchdog  (start gdy nie działa, restart gdy 2× brak health)
 ```
 
 ### Pierwsza konfiguracja (raz)
@@ -120,14 +121,14 @@ którego publiczna część jest w `~/.ssh/authorized_keys` na MyDevil), opcjona
 
 ```bash
 scp firebase-sa.json mydevil:apps/fieldreport-api/secrets/firebase-sa.json
-ssh mydevil 'chmod 600 apps/fieldreport-api/secrets/firebase-sa.json && apps/fieldreport-api/bin/run.sh restart'
+ssh mydevil 'chmod 600 apps/fieldreport-api/secrets/firebase-sa.json && sh apps/fieldreport-api/bin/run.sh restart'
 curl -s https://szkolenia.strefakodera.pl/maui/podstawowe/api/health   # firebaseConfigured: true
 ```
 
 ### Operacje
 
 ```bash
-ssh mydevil apps/fieldreport-api/bin/run.sh status        # restart | stop | start | health
+ssh mydevil sh apps/fieldreport-api/bin/run.sh status        # restart | stop | start | health
 ssh mydevil tail -n 100 apps/fieldreport-api/logs/api.log
 ssh mydevil grep ^Admin__Key apps/fieldreport-api/fieldreport-api.env
 curl -X POST -H "X-Admin-Key: <klucz>" https://szkolenia.strefakodera.pl/maui/podstawowe/api/admin/reset
