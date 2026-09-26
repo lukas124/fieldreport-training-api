@@ -1,0 +1,34 @@
+# build
+bin/
+obj/
+artifacts/
+publish/
+*.user
+.vs/
+.idea/
+.DS_Store
+TestResults/
+
+# dane runtime (zgłoszenia, zdjęcia, klucz podpisu JWT)
+data/
+App_Data/
+
+# poświadczenia Firebase / Google / Apple / SSH — NIGDY w repo
+secrets/
+*firebase-adminsdk*.json
+firebase-sa*.json
+service-account*.json
+serviceAccount*.json
+credentials*.json
+*.p8
+*.p12
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+.env
+.env.*
+*.env
+!deploy/mydevil/env.template
+appsettings.*.local.json
+appsettings.Production.json
