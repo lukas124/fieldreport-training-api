@@ -10,7 +10,11 @@ publish/
 TestResults/
 
 # dane runtime (zgłoszenia, zdjęcia, klucz podpisu JWT)
-data/
+# (nie 'data/' - na macOS FS jest case-insensitive i zjadłoby katalog kodu Data/)
+**/data/*.json
+**/data/*.txt
+**/data/*.tmp
+**/data/photos/
 App_Data/
 
 # poświadczenia Firebase / Google / Apple / SSH — NIGDY w repo
