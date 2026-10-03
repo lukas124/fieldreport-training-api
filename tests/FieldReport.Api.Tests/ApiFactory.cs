@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FieldReport.Api.Contracts;
+using FieldReport.Api.Data;
+using Microsoft.EntityFrameworkCore;
 using FieldReport.Api.Push;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -12,9 +14,10 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 namespace FieldReport.Api.Tests;
 
 /// <summary>
-/// API w pamięci (TestServer) z osobnym, tymczasowym katalogiem danych. Firebase domyślnie wyłączony,
-/// limity żądań wyłączone. Ustawienia przez <see cref="WebHostBuilderExtensions.UseSetting"/> — są widoczne
-/// także dla kodu w Program.cs czytającego konfigurację przed <c>Build()</c>.
+/// API w pamięci (TestServer) z własną bazą PostgreSQL (tworzoną przez API przy starcie, usuwaną w Dispose)
+/// i tymczasowym katalogiem na zdjęcia. Firebase i limity żądań wyłączone.
+/// Serwer bazy: zmienna FIELDREPORT_TEST_DB (domyślnie lokalny Postgres, użytkownik fieldreport/fieldreport).
+/// Ustawienia przez UseSetting — widzi je także kod Program.cs czytający konfigurację przed Build().
 /// </summary>
 public sealed class ApiFactory : WebApplicationFactory<Program>
 {
@@ -23,11 +26,16 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     private readonly Dictionary<string, string?> _settings;
     private readonly IPushSender? _pushSender;
 
+    public static readonly string TestServer =
+        Environment.GetEnvironmentVariable("FIELDREPORT_TEST_DB") ?? "Host=localhost;Username=fieldreport;Password=fieldreport";
+
     public ApiFactory(Dictionary<string, string?>? settings = null, IPushSender? pushSender = null)
     {
         DataDirectory = Path.Combine(Path.GetTempPath(), "fieldreport-api-tests", Guid.NewGuid().ToString("N"));
+        ConnectionString = $"{TestServer};Database=fieldreport_test_{Guid.NewGuid():N}";
         _settings = new Dictionary<string, string?>
         {
+            ["ConnectionStrings:FieldReport"] = ConnectionString,
             ["Storage:DataDirectory"] = DataDirectory,
             ["Firebase:Disabled"] = "true",
             ["Admin:Key"] = AdminKey,
@@ -39,6 +47,10 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     }
 
     public string DataDirectory { get; }
+    public string ConnectionString { get; }
+
+    /// <summary>Nie usuwaj bazy i katalogu w Dispose (test restartu używa ich w drugiej fabryce).</summary>
+    public bool KeepData { get; init; }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -57,7 +69,14 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        try { Directory.Delete(DataDirectory, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        if (KeepData) return;
+        var connectionString = _settings["ConnectionStrings:FieldReport"]!;
+        using (var db = new FieldReportDbContext(new DbContextOptionsBuilder<FieldReportDbContext>().UseNpgsql(connectionString).Options))
+        {
+            db.Database.EnsureDeleted();
+        }
+        var dir = _settings["Storage:DataDirectory"]!;
+        try { Directory.Delete(dir, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 }
 

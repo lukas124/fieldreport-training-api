@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FieldReport.Api.Contracts;
+using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace FieldReport.Api.Tests;
 
@@ -166,12 +167,25 @@ public sealed class HostingTests
     }
 
     [Test]
-    public async Task Forwarded_prefix_header_sets_pathbase_when_not_configured()
+    public async Task Health_reports_database_connected()
     {
         using var factory = new ApiFactory();
-        var request = new HttpRequestMessage(HttpMethod.Get, "api/health");
-        request.Headers.Add("X-Forwarded-Prefix", Prefix);
-        var health = await Api.ReadAsync<HealthDto>(await factory.CreateClient().SendAsync(request));
-        Assert.That(health.PathBase, Is.EqualTo(Prefix));
+        var health = await factory.CreateClient().GetFromJsonAsync<HealthDto>("api/health", Api.Json);
+        Assert.That(health!.DatabaseConnected, Is.True);
+    }
+
+    [TestCase("/")]
+    [TestCase("/swagger")]
+    [TestCase("/maui/inne/api/health")]
+    public async Task Paths_outside_pathbase_redirect_301_when_configured(string path)
+    {
+        using var factory = new ApiFactory(new() { ["PathBase"] = Prefix, ["RedirectOutsidePathBase"] = "https://strefakodera.pl/szkolenia" });
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var response = await client.GetAsync(path);
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.MovedPermanently));
+        Assert.That(response.Headers.Location!.ToString(), Is.EqualTo("https://strefakodera.pl/szkolenia"));
+        Assert.That((await client.GetAsync($"{Prefix}/api/health")).StatusCode, Is.EqualTo(HttpStatusCode.OK));
     }
 }

@@ -17,7 +17,7 @@ namespace FieldReport.Api.Auth;
 /// <summary>Klucz podpisu JWT: z konfiguracji albo wygenerowany raz i zapisany w katalogu danych (przeżywa restart).</summary>
 public sealed class SigningKeyProvider
 {
-    public SigningKeyProvider(IOptions<AuthOptions> auth, DataStore store)
+    public SigningKeyProvider(IOptions<AuthOptions> auth, StoragePaths paths)
     {
         var configured = auth.Value.SigningKey;
         string secret;
@@ -28,7 +28,7 @@ public sealed class SigningKeyProvider
         }
         else
         {
-            var file = Path.Combine(store.DataDirectory, "jwt-signing-key.txt");
+            var file = Path.Combine(paths.DataDirectory, "jwt-signing-key.txt");
             if (File.Exists(file))
             {
                 secret = File.ReadAllText(file).Trim();

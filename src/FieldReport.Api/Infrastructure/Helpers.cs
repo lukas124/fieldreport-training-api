@@ -8,7 +8,7 @@ namespace FieldReport.Api.Infrastructure;
 
 public static class ReportMapper
 {
-    public static ReportDto ToDto(this StoredReport r, HttpRequest request) => new()
+    public static ReportDto ToDto(this Report r, HttpRequest request) => new()
     {
         Id = r.Id,
         Title = r.Title,
@@ -20,7 +20,7 @@ public static class ReportMapper
         HasPhoto = r.PhotoFile is not null,
         PhotoUrl = r.PhotoFile is null
             ? null
-            : $"{request.Scheme}://{request.Host}{request.PathBase}/api/reports/{r.Id}/photo"
+            : request.HttpContext.RequestServices.GetRequiredService<PhotoUrlSigner>().CreateUrl(request, r.TechnicianEmail, r.Id)
     };
 }
 
@@ -68,4 +68,14 @@ public static class ImageSniffer
         }
         return null;
     }
+
+    /// <summary>Typ MIME po rozszerzeniu zapisanego pliku zdjęcia.</summary>
+    public static string ContentTypeFor(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".jpg" => "image/jpeg",
+        ".png" => "image/png",
+        ".webp" => "image/webp",
+        ".heic" => "image/heic",
+        _ => "application/octet-stream"
+    };
 }

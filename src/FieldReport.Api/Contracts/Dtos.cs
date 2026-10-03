@@ -246,6 +246,10 @@ public sealed class HealthDto
     /// <example>2026-09-26T08:00:00+00:00</example>
     public DateTimeOffset ServerTime { get; set; }
 
+    /// <summary>Czy API łączy się z bazą danych (PostgreSQL).</summary>
+    /// <example>true</example>
+    public bool DatabaseConnected { get; set; }
+
     /// <example>true</example>
     public bool FirebaseConfigured { get; set; }
 

@@ -32,6 +32,9 @@ public sealed class StorageOptions
     /// <summary>Maksymalny rozmiar zdjęcia w bajtach (domyślnie 5 MB).</summary>
     public long MaxPhotoBytes { get; set; } = 5 * 1024 * 1024;
 
+    /// <summary>Ważność podpisanego adresu zdjęcia (photoUrl) w minutach.</summary>
+    public int PhotoUrlLifetimeMinutes { get; set; } = 60;
+
     /// <summary>Limit zgłoszeń na technika (ochrona dysku na publicznym serwerze).</summary>
     public int MaxReportsPerTechnician { get; set; } = 500;
 
@@ -78,18 +81,6 @@ public sealed class RateLimitOptions
     public int PermitsPerMinute { get; set; } = 300;
     public int AuthPermitsPerMinute { get; set; } = 30;
     public int DispatcherPermitsPerMinute { get; set; } = 60;
-}
-
-/// <summary>Sekcja <c>ReverseProxy</c>.</summary>
-public sealed class ReverseProxyOptions
-{
-    public const string Section = "ReverseProxy";
-
-    /// <summary>Ufaj nagłówkom X-Forwarded-* z dowolnego adresu (proxy na tym samym hoście / w sieci wewnętrznej).</summary>
-    public bool TrustAllProxies { get; set; } = true;
-
-    /// <summary>Gdy <c>PathBase</c> jest pusty, a proxy wysyła <c>X-Forwarded-Prefix</c>, użyj go jako PathBase.</summary>
-    public bool UseForwardedPrefix { get; set; } = true;
 }
 
 /// <summary>Sekcja <c>Hosting</c>: adres nasłuchu (gdy nie podano <c>--urls</c>/<c>ASPNETCORE_URLS</c>).</summary>

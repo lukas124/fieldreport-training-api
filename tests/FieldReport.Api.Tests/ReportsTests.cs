@@ -152,7 +152,7 @@ public sealed class ReportsTests
         Assert.That(upload.StatusCode, Is.EqualTo(HttpStatusCode.OK), await upload.Content.ReadAsStringAsync());
         var dto = await Api.ReadAsync<ReportDto>(upload);
         Assert.That(dto.HasPhoto, Is.True);
-        Assert.That(dto.PhotoUrl, Does.EndWith($"/api/reports/{report.Id}/photo"));
+        Assert.That(dto.PhotoUrl, Does.Contain($"/api/reports/{report.Id}/photo?"));
 
         var photo = await client.GetAsync($"api/reports/{report.Id}/photo");
         Assert.That(photo.StatusCode, Is.EqualTo(HttpStatusCode.OK));
@@ -207,20 +207,24 @@ public sealed class ReportsTests
     [Test]
     public async Task Data_survive_restart()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "fieldreport-api-tests", Guid.NewGuid().ToString("N"));
         var email = Api.NewEmail();
         var report = Api.NewReport();
-        using (var first = new ApiFactory(new() { ["Storage:DataDirectory"] = dir }))
+        var first = new ApiFactory { KeepData = true };
+        using (first)
         {
             var (client, _) = await Api.AuthorizedClientAsync(first, email);
             await Api.PutReportAsync(client, report);
         }
 
-        using var second = new ApiFactory(new() { ["Storage:DataDirectory"] = dir });
+        // drugi proces API na tej samej bazie i katalogu danych
+        using var second = new ApiFactory(new()
+        {
+            ["ConnectionStrings:FieldReport"] = first.ConnectionString,
+            ["Storage:DataDirectory"] = first.DataDirectory
+        });
         var (again, _) = await Api.AuthorizedClientAsync(second, email);
         var list = await again.GetFromJsonAsync<List<ReportDto>>("api/reports", Api.Json);
 
         Assert.That(list!.Select(r => r.Id), Is.EqualTo(new[] { report.Id }));
-        Directory.Delete(dir, recursive: true);
     }
 }

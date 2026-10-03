@@ -15,7 +15,7 @@ namespace FieldReport.Api.Controllers;
 [Route("api/reports")]
 [Authorize]
 [Produces("application/json")]
-public sealed class ReportsController(DataStore store, IOptions<StorageOptions> storage) : ControllerBase
+public sealed class ReportsController(DataStore store, PhotoUrlSigner photoUrls, IOptions<StorageOptions> storage) : ControllerBase
 {
     /// <summary>Zgłoszenia technika zmienione po dacie <c>updatedSince</c> (puste = wszystkie).</summary>
     /// <remarks>
@@ -128,16 +128,41 @@ public sealed class ReportsController(DataStore store, IOptions<StorageOptions> 
         return saved is null ? NotFoundProblem() : saved.ToDto(Request);
     }
 
-    /// <summary>Pobranie zdjęcia zgłoszenia.</summary>
+    /// <summary>Pobranie zdjęcia zgłoszenia: podpisanym adresem z <c>photoUrl</c> (bez tokenu) albo z tokenem Bearer.</summary>
+    /// <remarks>
+    /// `photoUrl` z odpowiedzi API zawiera `tech`, `exp` i `sig` — działa bez nagłówka Authorization
+    /// (np. `Image Source="{Binding PhotoUrl}"`) do czasu `exp` (domyślnie 60 min od pobrania zgłoszenia).
+    /// Po wygaśnięciu pobierz zgłoszenie ponownie, żeby dostać nowy adres.
+    /// </remarks>
     /// <param name="id" example="3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f">Identyfikator zgłoszenia.</param>
+    /// <param name="tech">Klucz technika z podpisanego adresu.</param>
+    /// <param name="exp">Czas wygaśnięcia adresu (sekundy od 1970-01-01 UTC).</param>
+    /// <param name="sig">Podpis adresu.</param>
     /// <response code="200">Plik obrazu.</response>
+    /// <response code="401">Brak podpisu i brak tokenu.</response>
+    /// <response code="403">Podpis nieprawidłowy albo adres wygasł.</response>
     /// <response code="404">Brak zgłoszenia lub zdjęcia.</response>
     [HttpGet("{id:guid}/photo")]
+    [AllowAnonymous]
     [Produces("image/jpeg", "image/png", "image/webp", "image/heic", "application/problem+json")]
     [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    public IActionResult GetPhoto(Guid id)
+    public IActionResult GetPhoto(Guid id, [FromQuery] string? tech, [FromQuery] long? exp, [FromQuery] string? sig)
     {
+        if (sig is not null)
+        {
+            // podpisany adres: technika i zdjęcie wskazuje podpis, token nie jest potrzebny
+            if (tech is null || exp is null || !photoUrls.IsValid(tech, id, exp.Value, sig))
+                return Problem(title: "Nieprawidłowy adres zdjęcia", detail: "Podpis jest błędny albo adres wygasł — pobierz zgłoszenie ponownie.",
+                    statusCode: StatusCodes.Status403Forbidden);
+            var file = store.FindPhotoFile(tech, id);
+            return file is null ? NotFoundProblem("Zgłoszenie nie ma zdjęcia.") : PhysicalFile(file, ImageSniffer.ContentTypeFor(file));
+        }
+
+        // bez podpisu: zwykłe uwierzytelnienie tokenem
+        if (User.Identity?.IsAuthenticated != true) return Challenge();
         var email = User.Email();
         var report = store.GetReport(email, id);
         if (report?.PhotoFile is null) return NotFoundProblem("Zgłoszenie nie ma zdjęcia.");

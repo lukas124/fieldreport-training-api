@@ -1,12 +1,14 @@
 # FieldReport API (szkoleniowe)
 
 Backend do aplikacji **FieldReport** ze szkolenia „Podstawy .NET MAUI” (StrefaKodera.pl).
-ASP.NET Core **net9.0**, Swagger, JWT (access + jednorazowy refresh), trwały zapis w JSON, zdjęcia,
+ASP.NET Core **net9.0**, Swagger, JWT (access + jednorazowy refresh), **PostgreSQL** (EF Core + Npgsql), zdjęcia,
 rejestracja urządzeń i wysyłka push przez **Firebase Admin SDK** (FCM HTTP v1).
 
 | Gdzie | Adres |
 |---|---|
 | Publicznie | `https://mobilny.dev/maui/podstawowe/` (Swagger: `.../swagger`, health: `.../api/health`) |
+| Inne ścieżki domeny | `https://mobilny.dev/…` → 301 `https://strefakodera.pl/szkolenia` |
+| Stary adres | `https://szkolenia.strefakodera.pl/…` → 301 na ten sam adres w `mobilny.dev` |
 | Lokalnie | `http://localhost:5080` (emulator Android: `http://10.0.2.2:5080`) |
 
 ## Kontrakt
@@ -25,7 +27,7 @@ rejestracja urządzeń i wysyłka push przez **Firebase Admin SDK** (FCM HTTP v1
 | PATCH | `/api/dispatcher/reports/{id}/status` | dyspozytor: status + push `report_status_changed` |
 | GET | `/api/dispatcher/reports`, `/api/dispatcher/technicians` | podgląd (id zgłoszeń, urządzenia) |
 | POST | `/api/admin/reset[?technicianEmail=]` | reset danych, nagłówek `X-Admin-Key` |
-| GET | `/api/health` | wersja, czas, `firebaseConfigured` |
+| GET | `/api/health` | wersja, czas, `databaseConnected`, `firebaseConfigured` (503, gdy brak bazy) |
 
 Push (data): `{ "type": "report_assigned" | "report_status_changed", "reportId": "<guid>" }`, notification z tytułem,
 kanał Android `reports`. Enumy w JSON jako tekst (`Low/Normal/High`, `New/InProgress/Done`).
@@ -46,11 +48,28 @@ Przykładowy `ReportDto`:
 }
 ```
 
+## Baza danych
+
+PostgreSQL przez EF Core (Npgsql). Tabele: `Technicians`, `Reports` (klucz: e-mail technika + id), `Devices`,
+`RefreshTokens`. Zdjęcia leżą na dysku (`Storage:DataDirectory/photos`), w bazie tylko ich nazwa i typ.
+
+Schemat tworzy `Database.EnsureCreated()` przy starcie API — **bez migracji EF**. To najprostsze rozwiązanie dla
+danych szkoleniowych: przy zmianie modelu usuwa się tabele (albo całą bazę) i API zakłada je od nowa, puste.
+Projekt produkcyjny używałby migracji (`dotnet ef migrations add …`), żeby zmieniać schemat bez utraty danych.
+
+Connection string tylko ze środowiska: `ConnectionStrings__FieldReport` (lokalnie ustawiony w
+`Properties/launchSettings.json` na bazę deweloperską, na serwerze w pliku env).
+
 ## Uruchomienie lokalne
 
 ```bash
-dotnet run --project src/FieldReport.Api                                  # http://localhost:5080, Admin key: dev-admin-key
-dotnet run --project src/FieldReport.Api --launch-profile siec-sali       # 0.0.0.0:5080 — telefony w sieci sali
+# jednorazowo: PostgreSQL i baza deweloperska
+brew install postgresql@17 && brew services start postgresql@17
+psql -d postgres -c "CREATE ROLE fieldreport LOGIN PASSWORD 'fieldreport' CREATEDB;"
+psql -d postgres -c "CREATE DATABASE fieldreport OWNER fieldreport;"
+
+dotnet run --project src/FieldReport.Api                                   # http://localhost:5080, Admin key: dev-admin-key
+dotnet run --project src/FieldReport.Api --launch-profile siec-sali        # 0.0.0.0:5080 — telefony w sieci sali
 dotnet run --project src/FieldReport.Api --launch-profile demo-odswiezania # access token 60 s (demo 401 → refresh)
 
 # push lokalnie: klucz konta serwisowego POZA repo
@@ -58,14 +77,15 @@ export GOOGLE_APPLICATION_CREDENTIALS=~/sciezka/poza/repo/firebase-sa.json
 ```
 
 Konfiguracja (`appsettings.json`, nadpisywana zmiennymi `Sekcja__Klucz`): `PathBase`, `Hosting:Port`,
-`Hosting:ListenOnAllInterfaces`, `Auth:*` (PIN, czasy życia tokenów), `Storage:*` (katalog danych, limity),
+`RedirectOutsidePathBase`, `Hosting:ListenOnAllInterfaces`, `Auth:*` (PIN, czasy życia tokenów), `Storage:*` (katalog danych, limity),
 `Firebase:CredentialsPath` / `GOOGLE_APPLICATION_CREDENTIALS`, `Admin:Key`, `Dispatcher:Key`, `RateLimiting:*`.
 Bez poświadczeń Firebase API działa normalnie, a dyspozytor zwraca `push.skipped = true`.
 
 ## Testy
 
 ```bash
-dotnet test                                   # NUnit + WebApplicationFactory (bez sieci, bez Firebase)
+dotnet test                                   # NUnit + WebApplicationFactory na lokalnym PostgreSQL (każda klasa testów: własna baza)
+                                              # inny serwer bazy: FIELDREPORT_TEST_DB="Host=…;Username=…;Password=…"
 scripts/smoke.sh http://localhost:5080        # smoke przez curl na działającym API
 ADMIN_KEY=... scripts/smoke.sh https://mobilny.dev/maui/podstawowe   # + sprzątanie po sobie
 ```
@@ -73,10 +93,13 @@ ADMIN_KEY=... scripts/smoke.sh https://mobilny.dev/maui/podstawowe   # + sprząt
 ## Wdrożenie
 
 Hosting: **MyDevil** (FreeBSD, konto współdzielone z blogiem — skrypty dotykają tylko `~/apps/fieldreport-api`,
-strony `szkolenia.strefakodera.pl`, portu z opisem `fieldreport-api` i własnych linii crona).
+stron `mobilny.dev` i `szkolenia.strefakodera.pl`, bazy `p1028_fieldrepor`, portu z opisem `fieldreport-api` i własnych linii crona).
 Artefakt: `dotnet publish -c Release` **framework-dependent, bez RID** (host ma `/usr/local/bin/dotnet` z runtime 9).
-Za HTTPS odpowiada MyDevil (strona typu `proxy` → `localhost:<port>`, certyfikat Let's Encrypt z automatycznym
-odnawianiem po stronie MyDevil, `sslonly on`). DNS w Cloudflare: rekord A **DNS only** (bez proxy CF).
+Za HTTPS odpowiada MyDevil (strona `mobilny.dev` typu `proxy` → `localhost:<port>`, certyfikat Let's Encrypt z
+automatycznym odnawianiem po stronie MyDevil, `sslonly on`). DNS w Cloudflare: rekordy A **DNS only** (bez proxy CF).
+Proxy MyDevil przekazuje całą domenę, więc 301 dla ścieżek spoza `/maui/podstawowe` robi samo API
+(`RedirectOutsidePathBase`). Stary adres `szkolenia.strefakodera.pl` to strona php z jednym `.htaccess`
+(`redirect-old-domain.sh`). Baza: PostgreSQL MyDevil `p1028_fieldrepor` na `pgsql88.mydevil.net`.
 
 Układ na hoście:
 
@@ -85,8 +108,8 @@ Układ na hoście:
   app/                   artefakt (JEDYNY katalog czyszczony przez deploy: rsync --delete)
   bin/run.sh             sh run.sh start|stop|restart|status|health|watchdog (+ setup-mydevil.sh, env.template)
                          (zawsze przez `sh`: MyDevil nie wykonuje plików z $HOME bez `devil binexec on`)
-  fieldreport-api.env    konfiguracja, chmod 600 (port, PathBase, Admin__Key, GOOGLE_APPLICATION_CREDENTIALS)
-  data/                  data.json, zdjęcia, klucz podpisu JWT
+  fieldreport-api.env    konfiguracja, chmod 600 (port, PathBase, ConnectionStrings__FieldReport, Admin__Key, …)
+  data/                  zdjęcia (photos/), klucz podpisu JWT
   secrets/firebase-sa.json   klucz konta serwisowego (wgrywany ręcznie)
   logs/api.log           log (rotacja 10 MB × 5)
   run/api.pid
@@ -98,7 +121,10 @@ cron: @reboot sh run.sh start  |  */5 * * * * sh run.sh watchdog  (start gdy nie
 ```bash
 ssh mydevil mkdir -p apps/fieldreport-api/bin
 rsync -a deploy/mydevil/ mydevil:apps/fieldreport-api/bin/
+ssh mydevil devil pgsql db add fieldreport          # pyta o hasło → wpisz je w ConnectionStrings__FieldReport w env
 ssh mydevil sh apps/fieldreport-api/bin/setup-mydevil.sh
+# po przełączeniu DNS mobilny.dev na 185.36.169.6: ponowny setup wyda certyfikat, potem stary adres → 301
+ssh mydevil sh apps/fieldreport-api/bin/redirect-old-domain.sh
 ```
 
 ### Wdrożenie z lokalnej maszyny

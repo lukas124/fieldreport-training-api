@@ -43,7 +43,7 @@ echo "== host: $REMOTE"
   || { echo "ERROR: brak ~/$REMOTE_ROOT/fieldreport-api.env — najpierw setup-mydevil.sh (README → Wdrożenie)" >&2; exit 1; }
 
 echo "== skrypty → ~/$REMOTE_ROOT/bin/"
-rsync -az -e "$RSYNC_SSH" "$ROOT/deploy/mydevil/run.sh" "$ROOT/deploy/mydevil/setup-mydevil.sh" \
+rsync -az -e "$RSYNC_SSH" "$ROOT/deploy/mydevil/run.sh" "$ROOT/deploy/mydevil/setup-mydevil.sh" "$ROOT/deploy/mydevil/redirect-old-domain.sh" \
   "$ROOT/deploy/mydevil/env.template" "$REMOTE:$REMOTE_ROOT/bin/"
 
 echo "== rsync artefaktu → ~/$REMOTE_APP"

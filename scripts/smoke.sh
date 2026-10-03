@@ -39,6 +39,7 @@ echo "== smoke $BASE (technik: $EMAIL)"
 
 req 200 GET /api/health
 contains '"status":"ok"'
+contains '"databaseConnected":true'
 echo "     $(json_str "$TMP/body" firebaseStatus) | pathBase='$(json_str "$TMP/body" pathBase)'"
 
 req 401 POST /api/auth/login -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL\",\"pin\":\"0000\"}"
@@ -68,7 +69,13 @@ contains "\"id\":\"$ID\""
 printf '\377\330\377\340smoke-jpeg\377\331' > "$TMP/photo.jpg"
 req 200 PUT "/api/reports/$ID/photo" "${AUTH[@]}" -F "photo=@$TMP/photo.jpg;type=image/jpeg"
 contains '"hasPhoto":true'
-echo "     photoUrl=$(json_str "$TMP/body" photoUrl)"
+# photoUrl jest podpisany (tech, exp, sig) — działa bez tokenu; JSON koduje „&” jako \u0026
+PHOTO_URL="$(json_str "$TMP/body" photoUrl | sed 's/\\u0026/\&/g')"
+echo "     photoUrl=$PHOTO_URL"
+code="$(curl -sS -o "$TMP/signed.jpg" -w '%{http_code}' "$PHOTO_URL")"
+[ "$code" = "200" ] && cmp -s "$TMP/signed.jpg" "$TMP/photo.jpg" || fail "GET photoUrl bez tokenu: HTTP $code"
+ok "GET photoUrl (podpisany, bez tokenu) → 200"
+req 401 GET "/api/reports/$ID/photo"
 req 200 GET "/api/reports/$ID/photo" "${AUTH[@]}"
 cmp -s "$TMP/body" "$TMP/photo.jpg" || fail "pobrane zdjęcie różni się od wysłanego"
 

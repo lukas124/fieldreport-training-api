@@ -5,7 +5,8 @@
       "commandName": "Project",
       "launchBrowser": false,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__FieldReport": "Host=localhost;Database=fieldreport;Username=fieldreport;Password=fieldreport"
       }
     },
     "siec-sali": {
@@ -13,7 +14,8 @@
       "launchBrowser": false,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "Hosting__ListenOnAllInterfaces": "true"
+        "Hosting__ListenOnAllInterfaces": "true",
+        "ConnectionStrings__FieldReport": "Host=localhost;Database=fieldreport;Username=fieldreport;Password=fieldreport"
       }
     },
     "demo-odswiezania": {
@@ -21,7 +23,8 @@
       "launchBrowser": false,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "Auth__AccessTokenLifetimeSeconds": "60"
+        "Auth__AccessTokenLifetimeSeconds": "60",
+        "ConnectionStrings__FieldReport": "Host=localhost;Database=fieldreport;Username=fieldreport;Password=fieldreport"
       }
     }
   }

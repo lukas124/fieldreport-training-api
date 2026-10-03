@@ -11,6 +11,22 @@ concurrency: deploy-mydevil
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # testy integracyjne działają na prawdziwym PostgreSQL (każda klasa testów tworzy i usuwa własną bazę)
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: fieldreport
+          POSTGRES_PASSWORD: fieldreport
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fieldreport"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      FIELDREPORT_TEST_DB: Host=localhost;Username=fieldreport;Password=fieldreport
     steps:
       - name: Guard — ref must be main
         if: github.ref != 'refs/heads/main'

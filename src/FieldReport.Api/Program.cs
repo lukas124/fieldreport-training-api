@@ -9,6 +9,7 @@ using FieldReport.Api.Infrastructure;
 using FieldReport.Api.Push;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,15 +34,22 @@ builder.Services.Configure<FirebaseOptions>(builder.Configuration.GetSection(Fir
 builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection(AdminOptions.Section));
 builder.Services.Configure<DispatcherOptions>(builder.Configuration.GetSection(DispatcherOptions.Section));
 builder.Services.Configure<RateLimitOptions>(builder.Configuration.GetSection(RateLimitOptions.Section));
-builder.Services.Configure<ReverseProxyOptions>(builder.Configuration.GetSection(ReverseProxyOptions.Section));
 
 // ---------- usługi ----------
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton<DataStore>();
+// baza: connection string tylko z konfiguracji środowiska (ConnectionStrings__FieldReport)
+var connectionString = builder.Configuration.GetConnectionString("FieldReport");
+if (string.IsNullOrWhiteSpace(connectionString))
+    throw new InvalidOperationException("Brak ConnectionStrings:FieldReport (zmienna ConnectionStrings__FieldReport).");
+builder.Services.AddDbContext<FieldReportDbContext>(o => o.UseNpgsql(connectionString));
+
+builder.Services.AddSingleton<StoragePaths>();
+builder.Services.AddScoped<DataStore>();
 builder.Services.AddSingleton<SigningKeyProvider>();
-builder.Services.AddSingleton<TokenService>();
+builder.Services.AddSingleton<PhotoUrlSigner>();
+builder.Services.AddScoped<TokenService>();
 builder.Services.AddSingleton<IPushSender, FirebasePushSender>();
-builder.Services.AddSingleton<PushService>();
+builder.Services.AddScoped<PushService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
 builder.Services.AddSingleton<IConfigureOptions<JwtBearerOptions>, ConfigureJwtBearer>();
@@ -54,38 +62,40 @@ builder.Services.AddProblemDetails();
 builder.Services.AddFieldReportSwagger();
 builder.Services.AddFieldReportRateLimiting();
 
-builder.Services.AddOptions<ForwardedHeadersOptions>().Configure<IOptions<ReverseProxyOptions>>((o, proxy) =>
+// API stoi za reverse proxy hostingu: adres klienta i https bierzemy z nagłówków X-Forwarded-*
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
-    if (proxy.Value.TrustAllProxies)
-    {
-        o.KnownNetworks.Clear();
-        o.KnownProxies.Clear();
-    }
+    o.KnownNetworks.Clear();
+    o.KnownProxies.Clear();
 });
 
 var app = builder.Build();
 
+// tabele tworzone przy pierwszym starcie (bez migracji — patrz README → Baza danych)
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<FieldReportDbContext>().Database.EnsureCreated();
+}
+
 // ---------- potok ----------
 app.UseForwardedHeaders();
 
-var proxyOptions = app.Services.GetRequiredService<IOptions<ReverseProxyOptions>>().Value;
 var pathBase = NormalizePathBase(app.Configuration["PathBase"]);
 if (pathBase.Length > 0)
 {
     app.UsePathBase(pathBase); // /maui/podstawowe/api/... → PathBase=/maui/podstawowe, Path=/api/...
 }
-if (proxyOptions.UseForwardedPrefix)
+
+// żądania spoza PathBase (np. „/” domeny) → 301 na adres z konfiguracji; pusty adres = wyłączone
+var outsideRedirect = app.Configuration["RedirectOutsidePathBase"];
+if (pathBase.Length > 0 && !string.IsNullOrWhiteSpace(outsideRedirect))
 {
-    // proxy obcinające prefiks może go podać w X-Forwarded-Prefix — wtedy linki i Swagger nadal są poprawne
     app.Use((context, next) =>
     {
-        if (!context.Request.PathBase.HasValue
-            && NormalizePathBase(context.Request.Headers["X-Forwarded-Prefix"].FirstOrDefault()) is { Length: > 0 } prefix)
-        {
-            context.Request.PathBase = prefix;
-        }
-        return next(context);
+        if (context.Request.PathBase.HasValue) return next(context);
+        context.Response.Redirect(outsideRedirect, permanent: true);
+        return Task.CompletedTask;
     });
 }
 
@@ -106,10 +116,10 @@ app.MapGet("/", (HttpContext ctx, IPushSender push) => Results.Content(HomePage.
 
 app.Lifetime.ApplicationStarted.Register(() =>
 {
-    var store = app.Services.GetRequiredService<DataStore>();
+    var paths = app.Services.GetRequiredService<StoragePaths>();
     var push = app.Services.GetRequiredService<IPushSender>();
     app.Logger.LogInformation("FieldReport API {Version} | PathBase: '{PathBase}' | dane: {Dir} | {Firebase}",
-        HealthController.Version, pathBase, store.DataDirectory, push.StatusDescription);
+        HealthController.Version, pathBase, paths.DataDirectory, push.StatusDescription);
     if (!explicitUrls && hosting.ListenOnAllInterfaces)
     {
         foreach (var ip in LanAddresses())

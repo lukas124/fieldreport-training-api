@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>FieldReport.Api</RootNamespace>
     <AssemblyName>FieldReport.Api</AssemblyName>
-    <Version>1.0.2</Version>
+    <Version>1.1.0</Version>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- brak komentarza XML w publicznym typie to nie błąd -->
     <NoWarn>$(NoWarn);1591</NoWarn>
@@ -23,6 +23,7 @@
   <ItemGroup>
     <PackageReference Include="FirebaseAdmin" Version="3.7.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.20" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="9.0.6" />
   </ItemGroup>
 

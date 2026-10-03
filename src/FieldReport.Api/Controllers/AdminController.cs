@@ -54,25 +54,40 @@ public sealed class AdminController(DataStore store, IOptionsMonitor<AdminOption
 [Route("api/health")]
 [AllowAnonymous]
 [Produces("application/json")]
-public sealed class HealthController(IPushSender push, IOptionsMonitor<AuthOptions> auth, IHostEnvironment env, TimeProvider time) : ControllerBase
+public sealed class HealthController(
+    IPushSender push, FieldReportDbContext db, IOptionsMonitor<AuthOptions> auth, IHostEnvironment env, TimeProvider time) : ControllerBase
 {
     public static readonly string Version =
         typeof(HealthController).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "1.0.0";
 
-    /// <summary>Wersja, czas serwera i czy Firebase jest skonfigurowany.</summary>
+    /// <summary>Wersja, czas serwera, połączenie z bazą i czy Firebase jest skonfigurowany.</summary>
     /// <response code="200">Usługa działa.</response>
+    /// <response code="503">Brak połączenia z bazą danych.</response>
     [HttpGet]
     [HttpHead] // monitory dostępności i `curl -I`
     [ProducesResponseType<HealthDto>(StatusCodes.Status200OK)]
-    public ActionResult<HealthDto> Get() => new HealthDto
+    [ProducesResponseType<HealthDto>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<ActionResult<HealthDto>> Get(CancellationToken ct)
     {
-        Status = "ok",
-        Version = Version,
-        ServerTime = time.GetUtcNow(),
-        FirebaseConfigured = push.IsConfigured,
-        FirebaseStatus = push.StatusDescription,
-        PathBase = Request.PathBase.Value ?? "",
-        AccessTokenLifetimeSeconds = auth.CurrentValue.AccessTokenLifetimeSeconds,
-        Environment = env.EnvironmentName
-    };
+        var databaseOk = await CanConnectAsync(ct);
+        var health = new HealthDto
+        {
+            Status = databaseOk ? "ok" : "error",
+            DatabaseConnected = databaseOk,
+            Version = Version,
+            ServerTime = time.GetUtcNow(),
+            FirebaseConfigured = push.IsConfigured,
+            FirebaseStatus = push.StatusDescription,
+            PathBase = Request.PathBase.Value ?? "",
+            AccessTokenLifetimeSeconds = auth.CurrentValue.AccessTokenLifetimeSeconds,
+            Environment = env.EnvironmentName
+        };
+        return databaseOk ? health : StatusCode(StatusCodes.Status503ServiceUnavailable, health);
+    }
+
+    private async Task<bool> CanConnectAsync(CancellationToken ct)
+    {
+        try { return await db.Database.CanConnectAsync(ct); }
+        catch (Exception) { return false; }
+    }
 }

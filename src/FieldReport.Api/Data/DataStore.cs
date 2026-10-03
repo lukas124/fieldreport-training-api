@@ -1,67 +1,24 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using FieldReport.Api.Contracts;
 using FieldReport.Api.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace FieldReport.Api.Data;
 
-public sealed record StoredReport(
-    Guid Id,
-    string Title,
-    string? Description,
-    ReportPriority Priority,
-    ReportStatus Status,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt,
-    string? PhotoFile,
-    string? PhotoContentType);
-
-public sealed record StoredDevice(string Token, string Platform, DateTimeOffset RegisteredAt);
-
-public sealed record TechnicianInfo(string Email, string Name, int ReportCount, IReadOnlyList<StoredDevice> Devices);
+public sealed record TechnicianInfo(string Email, string Name, int ReportCount, IReadOnlyList<Device> Devices);
 
 public enum UpsertOutcome { Created, Updated, LimitExceeded }
 
 /// <summary>
-/// Dane w pamięci + trwały zapis do <c>{DataDirectory}/data.json</c> (zapis atomowy po każdej zmianie).
-/// Zdjęcia leżą w <c>{DataDirectory}/photos/{klucz technika}/{id}.{ext}</c>.
-/// Wszystkie klucze techników to znormalizowany (małe litery) e-mail.
+/// Operacje na danych API: technicy, zgłoszenia, urządzenia i refresh tokeny w PostgreSQL (EF Core),
+/// zdjęcia jako pliki w <c>{DataDirectory}/photos/{klucz technika}/{id}.{ext}</c>.
+/// Klucz technika w bazie to e-mail małymi literami.
 /// </summary>
-public sealed class DataStore
+public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOptions<StorageOptions> options, TimeProvider time)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() }
-    };
-
-    private readonly object _gate = new();
-    private readonly TimeProvider _time;
-    private readonly ILogger<DataStore> _logger;
-    private readonly StorageOptions _options;
-    private readonly string _dataFile;
-    private State _state;
-    private DateTimeOffset _lastStamp = DateTimeOffset.MinValue;
-
-    public DataStore(IOptions<StorageOptions> options, IHostEnvironment env, TimeProvider time, ILogger<DataStore> logger)
-    {
-        _options = options.Value;
-        _time = time;
-        _logger = logger;
-        DataDirectory = Path.GetFullPath(Path.IsPathRooted(_options.DataDirectory)
-            ? _options.DataDirectory
-            : Path.Combine(env.ContentRootPath, _options.DataDirectory));
-        PhotosDirectory = Path.Combine(DataDirectory, "photos");
-        Directory.CreateDirectory(PhotosDirectory);
-        _dataFile = Path.Combine(DataDirectory, "data.json");
-        _state = Load();
-    }
-
-    public string DataDirectory { get; }
-    public string PhotosDirectory { get; }
+    private readonly StorageOptions _options = options.Value;
 
     public static string Normalize(string email) => email.Trim().ToLowerInvariant();
 
@@ -69,152 +26,150 @@ public sealed class DataStore
 
     public void EnsureTechnician(string email, string name)
     {
-        lock (_gate)
-        {
-            var key = Normalize(email);
-            if (_state.Technicians.TryGetValue(key, out var t))
-            {
-                t.LastSeenAt = _time.GetUtcNow();
-            }
-            else
-            {
-                _state.Technicians[key] = new Technician { Email = key, Name = name, LastSeenAt = _time.GetUtcNow() };
-            }
-            Save();
-        }
+        GetOrAddTechnician(email, name).LastSeenAt = Now();
+        db.SaveChanges();
     }
 
-    public IReadOnlyList<TechnicianInfo> GetTechnicians()
-    {
-        lock (_gate)
-        {
-            return _state.Technicians.Values
-                .OrderBy(t => t.Email)
-                .Select(t => new TechnicianInfo(t.Email, t.Name, t.Reports.Count, t.Devices.Values.ToList()))
-                .ToList();
-        }
-    }
+    public IReadOnlyList<TechnicianInfo> GetTechnicians() =>
+        db.Technicians
+            .OrderBy(t => t.Email)
+            .Select(t => new TechnicianInfo(t.Email, t.Name, t.Reports.Count, t.Devices.ToList()))
+            .ToList();
 
-    public string? GetTechnicianName(string email)
-    {
-        lock (_gate)
-        {
-            return _state.Technicians.TryGetValue(Normalize(email), out var t) ? t.Name : null;
-        }
-    }
+    public string? GetTechnicianName(string email) =>
+        db.Technicians.Where(t => t.Email == Normalize(email)).Select(t => t.Name).FirstOrDefault();
 
     // ---------- zgłoszenia ----------
 
-    public IReadOnlyList<StoredReport> GetReports(string email, DateTimeOffset? updatedSince)
+    /// <summary>Zgłoszenia technika zmienione po <paramref name="updatedSince"/> (null = wszystkie), od najnowszej zmiany.</summary>
+    public IReadOnlyList<Report> GetReports(string email, DateTimeOffset? updatedSince)
     {
-        lock (_gate)
+        var key = Normalize(email);
+        var query = db.Reports.AsNoTracking().Where(r => r.TechnicianEmail == key);
+        if (updatedSince is { } since)
         {
-            if (!_state.Technicians.TryGetValue(Normalize(email), out var t)) return [];
-            return t.Reports.Values
-                .Where(r => updatedSince is null || r.UpdatedAt > updatedSince.Value)
-                .OrderByDescending(r => r.UpdatedAt)
-                .ToList();
+            var sinceUtc = since.ToUniversalTime();
+            query = query.Where(r => r.UpdatedAt > sinceUtc);
         }
+        return query.OrderByDescending(r => r.UpdatedAt).ToList();
     }
 
-    public StoredReport? GetReport(string email, Guid id)
-    {
-        lock (_gate)
-        {
-            return _state.Technicians.TryGetValue(Normalize(email), out var t) && t.Reports.TryGetValue(id, out var r) ? r : null;
-        }
-    }
+    public Report? GetReport(string email, Guid id) =>
+        db.Reports.AsNoTracking().FirstOrDefault(r => r.TechnicianEmail == Normalize(email) && r.Id == id);
 
     /// <summary>Idempotentny upsert: to samo <paramref name="id"/> zawsze nadpisuje ten sam rekord technika.</summary>
-    public (UpsertOutcome Outcome, StoredReport? Report) Upsert(string email, string name, Guid id, ReportDto dto)
+    public (UpsertOutcome Outcome, Report? Report) Upsert(string email, string name, Guid id, ReportDto dto)
     {
-        lock (_gate)
+        var key = Normalize(email);
+        var existing = db.Reports.FirstOrDefault(r => r.TechnicianEmail == key && r.Id == id);
+        if (existing is not null)
         {
-            var t = GetOrAddTechnician(email, name);
-            var now = NextStamp();
-            if (t.Reports.TryGetValue(id, out var existing))
-            {
-                var updated = existing with
-                {
-                    Title = dto.Title.Trim(),
-                    Description = dto.Description,
-                    Priority = dto.Priority,
-                    Status = dto.Status,
-                    UpdatedAt = now
-                };
-                t.Reports[id] = updated;
-                Save();
-                return (UpsertOutcome.Updated, updated);
-            }
+            existing.Title = dto.Title;
+            existing.Description = dto.Description;
+            existing.Priority = dto.Priority;
+            existing.Status = dto.Status;
+            existing.UpdatedAt = NextStamp();
+            db.SaveChanges();
+            return (UpsertOutcome.Updated, existing);
+        }
 
-            if (t.Reports.Count >= _options.MaxReportsPerTechnician) return (UpsertOutcome.LimitExceeded, null);
+        GetOrAddTechnician(email, name);
+        if (db.Reports.Count(r => r.TechnicianEmail == key) >= _options.MaxReportsPerTechnician)
+            return (UpsertOutcome.LimitExceeded, null);
 
-            var created = new StoredReport(id, dto.Title.Trim(), dto.Description, dto.Priority, dto.Status,
-                dto.CreatedAt == default ? now : dto.CreatedAt, now, null, null);
-            t.Reports[id] = created;
-            Save();
+        var now = NextStamp();
+        var created = new Report
+        {
+            TechnicianEmail = key,
+            Id = id,
+            Title = dto.Title,
+            Description = dto.Description,
+            Priority = dto.Priority,
+            Status = dto.Status,
+            CreatedAt = dto.CreatedAt == default ? now : Microseconds(dto.CreatedAt.ToUniversalTime()),
+            UpdatedAt = now
+        };
+        db.Reports.Add(created);
+        try
+        {
+            db.SaveChanges();
             return (UpsertOutcome.Created, created);
+        }
+        catch (DbUpdateException)
+        {
+            // ten sam PUT przyszedł dwa razy jednocześnie i drugi zdążył zapisać rekord — wtedy to aktualizacja
+            db.ChangeTracker.Clear();
+            return Upsert(email, name, id, dto);
         }
     }
 
     /// <summary>Nowe zgłoszenie od dyspozytora (status New, identyfikator nadaje serwer).</summary>
-    public StoredReport? CreateByDispatcher(string email, string name, string title, string? description, ReportPriority priority)
+    public Report? CreateByDispatcher(string email, string name, string title, string? description, ReportPriority priority)
     {
-        lock (_gate)
+        var key = Normalize(email);
+        GetOrAddTechnician(email, name);
+        if (db.Reports.Count(r => r.TechnicianEmail == key) >= _options.MaxReportsPerTechnician) return null;
+
+        var now = NextStamp();
+        var report = new Report
         {
-            var t = GetOrAddTechnician(email, name);
-            if (t.Reports.Count >= _options.MaxReportsPerTechnician) return null;
-            var now = NextStamp();
-            var report = new StoredReport(Guid.NewGuid(), title.Trim(), description, priority, ReportStatus.New, now, now, null, null);
-            t.Reports[report.Id] = report;
-            Save();
-            return report;
-        }
+            TechnicianEmail = key,
+            Id = Guid.NewGuid(),
+            Title = title,
+            Description = description,
+            Priority = priority,
+            Status = ReportStatus.New,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.Reports.Add(report);
+        db.SaveChanges();
+        return report;
     }
 
-    /// <summary>Wszystkie zgłoszenia o danym id (w praktyce jedno) wraz z e-mailem technika.</summary>
-    public IReadOnlyList<(string Email, StoredReport Report)> FindById(Guid id)
+    /// <summary>Zgłoszenia o danym id u wszystkich techników (zwykle jedno).</summary>
+    public IReadOnlyList<(string Email, Report Report)> FindById(Guid id) =>
+        db.Reports.AsNoTracking().Where(r => r.Id == id).AsEnumerable().Select(r => (r.TechnicianEmail, r)).ToList();
+
+    public IReadOnlyList<(string Email, Report Report)> GetAllReports(string? email)
     {
-        lock (_gate)
+        var query = db.Reports.AsNoTracking();
+        if (email is not null)
         {
-            return _state.Technicians.Values
-                .Where(t => t.Reports.ContainsKey(id))
-                .Select(t => (t.Email, t.Reports[id]))
-                .ToList();
+            var key = Normalize(email);
+            query = query.Where(r => r.TechnicianEmail == key);
         }
+        return query.OrderByDescending(r => r.UpdatedAt).AsEnumerable().Select(r => (r.TechnicianEmail, r)).ToList();
     }
 
-    public IReadOnlyList<(string Email, StoredReport Report)> GetAllReports(string? email)
+    public Report? SetStatus(string email, Guid id, ReportStatus status)
     {
-        lock (_gate)
-        {
-            return _state.Technicians.Values
-                .Where(t => email is null || t.Email == Normalize(email))
-                .SelectMany(t => t.Reports.Values.Select(r => (t.Email, r)))
-                .OrderByDescending(x => x.r.UpdatedAt)
-                .ToList();
-        }
-    }
-
-    public StoredReport? SetStatus(string email, Guid id, ReportStatus status)
-    {
-        lock (_gate)
-        {
-            if (!_state.Technicians.TryGetValue(Normalize(email), out var t) || !t.Reports.TryGetValue(id, out var r)) return null;
-            var updated = r with { Status = status, UpdatedAt = NextStamp() };
-            t.Reports[id] = updated;
-            Save();
-            return updated;
-        }
+        var report = db.Reports.FirstOrDefault(r => r.TechnicianEmail == Normalize(email) && r.Id == id);
+        if (report is null) return null;
+        report.Status = status;
+        report.UpdatedAt = NextStamp();
+        db.SaveChanges();
+        return report;
     }
 
     // ---------- zdjęcia ----------
 
-    public string PhotoPath(string email, string fileName) => Path.Combine(PhotosDirectory, TechnicianKey(email), fileName);
+    public string PhotoPath(string email, string fileName) => Path.Combine(paths.PhotosDirectory, TechnicianKey(email), fileName);
 
-    public async Task<StoredReport?> SavePhotoAsync(string email, Guid id, Stream content, string extension, string contentType, CancellationToken ct)
+    /// <summary>Plik zdjęcia zgłoszenia <paramref name="id"/> w katalogu technika o kluczu <paramref name="technicianKey"/> albo null.</summary>
+    public string? FindPhotoFile(string technicianKey, Guid id)
     {
-        if (GetReport(email, id) is null) return null;
+        var dir = Path.Combine(paths.PhotosDirectory, technicianKey);
+        return Directory.Exists(dir)
+            ? Directory.GetFiles(dir, $"{id:N}.*").FirstOrDefault(f => !f.EndsWith(".tmp", StringComparison.Ordinal))
+            : null;
+    }
+
+    /// <summary>Zapisuje plik zdjęcia (najpierw do pliku tymczasowego) i oznacza zgłoszenie jako mające zdjęcie.</summary>
+    public async Task<Report?> SavePhotoAsync(string email, Guid id, Stream content, string extension, string contentType, CancellationToken ct)
+    {
+        var report = await db.Reports.FirstOrDefaultAsync(r => r.TechnicianEmail == Normalize(email) && r.Id == id, ct);
+        if (report is null) return null;
 
         var fileName = $"{id:N}{extension}";
         var path = PhotoPath(email, fileName);
@@ -224,172 +179,132 @@ public sealed class DataStore
         {
             await content.CopyToAsync(fs, ct);
         }
+        if (report.PhotoFile is { } old && old != fileName) TryDelete(PhotoPath(email, old));
+        File.Move(temp, path, overwrite: true);
 
-        lock (_gate)
-        {
-            if (!_state.Technicians.TryGetValue(Normalize(email), out var t) || !t.Reports.TryGetValue(id, out var r))
-            {
-                File.Delete(temp);
-                return null;
-            }
-            if (r.PhotoFile is { } old && old != fileName) TryDelete(PhotoPath(email, old));
-            File.Move(temp, path, overwrite: true);
-            var updated = r with { PhotoFile = fileName, PhotoContentType = contentType, UpdatedAt = NextStamp() };
-            t.Reports[id] = updated;
-            Save();
-            return updated;
-        }
+        report.PhotoFile = fileName;
+        report.PhotoContentType = contentType;
+        report.UpdatedAt = NextStamp();
+        await db.SaveChangesAsync(ct);
+        return report;
     }
 
     // ---------- urządzenia ----------
 
-    /// <summary>Rejestruje token u technika (token przypisany wcześniej innemu technikowi zostaje przeniesiony).</summary>
-    public StoredDevice? RegisterDevice(string email, string name, string token, string platform)
+    /// <summary>Rejestruje token u technika (token zarejestrowany przez innego technika zostaje przeniesiony).</summary>
+    public Device RegisterDevice(string email, string name, string token, string platform)
     {
-        lock (_gate)
+        var key = Normalize(email);
+        GetOrAddTechnician(email, name);
+
+        var device = db.Devices.Find(token);
+        if (device is null)
         {
-            foreach (var other in _state.Technicians.Values) other.Devices.Remove(token);
-            var t = GetOrAddTechnician(email, name);
-            if (t.Devices.Count >= _options.MaxDevicesPerTechnician)
-            {
-                var oldest = t.Devices.Values.OrderBy(d => d.RegisteredAt).First();
-                t.Devices.Remove(oldest.Token);
-            }
-            var device = new StoredDevice(token, platform, _time.GetUtcNow());
-            t.Devices[token] = device;
-            Save();
-            return device;
+            // limit urządzeń: najstarsze rejestracje technika są usuwane
+            var surplus = db.Devices.Where(d => d.TechnicianEmail == key)
+                .OrderByDescending(d => d.RegisteredAt).Skip(_options.MaxDevicesPerTechnician - 1).ToList();
+            db.Devices.RemoveRange(surplus);
+            device = new Device { Token = token };
+            db.Devices.Add(device);
         }
+        device.TechnicianEmail = key;
+        device.Platform = platform;
+        device.RegisteredAt = Now();
+        db.SaveChanges();
+        return device;
     }
 
-    public IReadOnlyList<StoredDevice> GetDevices(string email)
-    {
-        lock (_gate)
-        {
-            return _state.Technicians.TryGetValue(Normalize(email), out var t) ? t.Devices.Values.ToList() : [];
-        }
-    }
+    public IReadOnlyList<Device> GetDevices(string email) =>
+        db.Devices.AsNoTracking().Where(d => d.TechnicianEmail == Normalize(email)).ToList();
 
-    public bool RemoveDevice(string email, string token)
-    {
-        lock (_gate)
-        {
-            if (!_state.Technicians.TryGetValue(Normalize(email), out var t) || !t.Devices.Remove(token)) return false;
-            Save();
-            return true;
-        }
-    }
+    public bool RemoveDevice(string email, string token) =>
+        db.Devices.Where(d => d.TechnicianEmail == Normalize(email) && d.Token == token).ExecuteDelete() > 0;
 
-    public void RemoveTokenEverywhere(string token)
-    {
-        lock (_gate)
-        {
-            var removed = false;
-            foreach (var t in _state.Technicians.Values) removed |= t.Devices.Remove(token);
-            if (removed) Save();
-        }
-    }
+    public void RemoveTokenEverywhere(string token) => db.Devices.Where(d => d.Token == token).ExecuteDelete();
 
     // ---------- refresh tokeny ----------
 
     public void AddRefreshToken(string token, string email, DateTimeOffset expiresAt)
     {
-        lock (_gate)
-        {
-            var now = _time.GetUtcNow();
-            foreach (var expired in _state.RefreshTokens.Where(kv => kv.Value.ExpiresAt <= now).Select(kv => kv.Key).ToList())
-                _state.RefreshTokens.Remove(expired);
-            _state.RefreshTokens[Hash(token)] = new RefreshEntry { Email = Normalize(email), ExpiresAt = expiresAt };
-            Save();
-        }
+        var now = Now();
+        db.RefreshTokens.Where(r => r.ExpiresAt <= now).ExecuteDelete();
+        db.RefreshTokens.Add(new RefreshToken { Hash = Hash(token), TechnicianEmail = Normalize(email), ExpiresAt = expiresAt.ToUniversalTime() });
+        db.SaveChanges();
     }
 
     /// <summary>Zużywa refresh token (jednorazowy). Zwraca e-mail technika albo null.</summary>
     public string? ConsumeRefreshToken(string token)
     {
-        lock (_gate)
-        {
-            var hash = Hash(token);
-            if (!_state.RefreshTokens.Remove(hash, out var entry)) return null;
-            Save();
-            return entry.ExpiresAt > _time.GetUtcNow() ? entry.Email : null;
-        }
+        var entry = db.RefreshTokens.Find(Hash(token));
+        if (entry is null) return null;
+        db.RefreshTokens.Remove(entry);
+        db.SaveChanges();
+        return entry.ExpiresAt > Now() ? entry.TechnicianEmail : null;
     }
 
     // ---------- reset ----------
 
+    /// <summary>Usuwa technika (albo wszystkich) razem ze zgłoszeniami, urządzeniami, sesjami i zdjęciami.</summary>
     public (int Reports, int Technicians) Reset(string? email)
     {
-        lock (_gate)
+        var technicians = db.Technicians.AsQueryable();
+        var reports = db.Reports.AsQueryable();
+        if (email is not null)
         {
-            var targets = _state.Technicians.Values.Where(t => email is null || t.Email == Normalize(email)).ToList();
-            var reports = targets.Sum(t => t.Reports.Count);
-            foreach (var t in targets)
-            {
-                _state.Technicians.Remove(t.Email);
-                TryDeleteDirectory(Path.Combine(PhotosDirectory, TechnicianKey(t.Email)));
-                foreach (var key in _state.RefreshTokens.Where(kv => kv.Value.Email == t.Email).Select(kv => kv.Key).ToList())
-                    _state.RefreshTokens.Remove(key);
-            }
-            if (email is null) _state.RefreshTokens.Clear();
-            Save();
-            return (reports, targets.Count);
+            var key = Normalize(email);
+            technicians = technicians.Where(t => t.Email == key);
+            reports = reports.Where(r => r.TechnicianEmail == key);
         }
+
+        var emails = technicians.Select(t => t.Email).ToList();
+        var reportCount = reports.Count();
+        technicians.ExecuteDelete(); // kaskadowo: zgłoszenia, urządzenia, refresh tokeny
+        foreach (var e in emails) TryDeleteDirectory(Path.Combine(paths.PhotosDirectory, TechnicianKey(e)));
+        return (reportCount, emails.Count);
     }
 
-    // ---------- wnętrze ----------
+    // ---------- pomocnicze ----------
 
     private Technician GetOrAddTechnician(string email, string name)
     {
         var key = Normalize(email);
-        if (!_state.Technicians.TryGetValue(key, out var t))
+        var technician = db.Technicians.Find(key);
+        if (technician is null)
         {
-            t = new Technician { Email = key, Name = name, LastSeenAt = _time.GetUtcNow() };
-            _state.Technicians[key] = t;
+            technician = new Technician { Email = key, Name = name, LastSeenAt = Now() };
+            db.Technicians.Add(technician);
         }
-        return t;
+        return technician;
     }
 
-    /// <summary>Ściśle rosnący znacznik czasu — dwie zmiany nigdy nie mają tego samego <c>UpdatedAt</c>.</summary>
+    private static readonly object StampLock = new();
+    private static DateTimeOffset _lastStamp = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Znacznik czasu zmiany: UTC z dokładnością do mikrosekundy (tyle przechowuje PostgreSQL) i zawsze większy
+    /// od poprzedniego — dwie zmiany nigdy nie mają tego samego <c>UpdatedAt</c>, więc <c>updatedSince</c> niczego nie gubi.
+    /// </summary>
     private DateTimeOffset NextStamp()
     {
-        var now = _time.GetUtcNow();
-        if (now <= _lastStamp) now = _lastStamp.AddTicks(1);
-        _lastStamp = now;
-        return now;
+        lock (StampLock)
+        {
+            var now = Now();
+            if (now <= _lastStamp) now = _lastStamp.AddTicks(10);
+            _lastStamp = now;
+            return now;
+        }
     }
 
-    private static string TechnicianKey(string email) =>
+    private DateTimeOffset Now() => Microseconds(time.GetUtcNow());
+
+    private static DateTimeOffset Microseconds(DateTimeOffset value) =>
+        new(value.UtcTicks - value.UtcTicks % 10, TimeSpan.Zero);
+
+    /// <summary>Nazwa katalogu zdjęć technika: pierwsze 16 znaków SHA-256 z e-maila (e-mail nie trafia do adresów URL).</summary>
+    public static string TechnicianKey(string email) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Normalize(email))))[..16].ToLowerInvariant();
 
     private static string Hash(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
-
-    private State Load()
-    {
-        if (!File.Exists(_dataFile)) return new State();
-        try
-        {
-            var state = JsonSerializer.Deserialize<State>(File.ReadAllText(_dataFile), JsonOptions) ?? new State();
-            foreach (var r in state.Technicians.Values.SelectMany(t => t.Reports.Values))
-                if (r.UpdatedAt > _lastStamp) _lastStamp = r.UpdatedAt;
-            _logger.LogInformation("Wczytano dane: {Technicians} techników z {File}", state.Technicians.Count, _dataFile);
-            return state;
-        }
-        catch (Exception ex)
-        {
-            var backup = _dataFile + $".corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
-            File.Copy(_dataFile, backup, overwrite: true);
-            _logger.LogError(ex, "Nie udało się wczytać {File}; kopia w {Backup}, start z pustymi danymi", _dataFile, backup);
-            return new State();
-        }
-    }
-
-    private void Save()
-    {
-        var temp = _dataFile + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(_state, JsonOptions));
-        File.Move(temp, _dataFile, overwrite: true);
-    }
 
     private static void TryDelete(string path)
     {
@@ -399,26 +314,5 @@ public sealed class DataStore
     private static void TryDeleteDirectory(string path)
     {
         try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch (IOException) { }
-    }
-
-    private sealed class State
-    {
-        public Dictionary<string, Technician> Technicians { get; set; } = [];
-        public Dictionary<string, RefreshEntry> RefreshTokens { get; set; } = [];
-    }
-
-    private sealed class Technician
-    {
-        public string Email { get; set; } = "";
-        public string Name { get; set; } = "";
-        public DateTimeOffset LastSeenAt { get; set; }
-        public Dictionary<Guid, StoredReport> Reports { get; set; } = [];
-        public Dictionary<string, StoredDevice> Devices { get; set; } = [];
-    }
-
-    private sealed class RefreshEntry
-    {
-        public string Email { get; set; } = "";
-        public DateTimeOffset ExpiresAt { get; set; }
     }
 }

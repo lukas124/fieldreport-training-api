@@ -13,9 +13,12 @@
 #
 # Kroki: katalogi → port (devil port add tcp random, gdy brak) → strona proxy → env z szablonu
 #        (chmod 600, losowy Admin__Key) → cron @reboot + watchdog */5 → SSL Let's Encrypt (MyDevil) + sslonly.
+#
+# Baza PostgreSQL powstaje ręcznie (devil pyta o hasło): `devil pgsql db add fieldreport`, potem hasło
+# wpisz w ConnectionStrings__FieldReport w pliku env. SSL wymaga, by DNS domeny wskazywał już na WEB_IP.
 set -eu
 
-DOMAIN="${DOMAIN:-szkolenia.strefakodera.pl}"
+DOMAIN="${DOMAIN:-mobilny.dev}"
 WEB_IP="${WEB_IP:-185.36.169.6}"          # WEB IP konta (web88), nie IP węzła ssh
 PORT_DESC="fieldreport-api"
 APP_ROOT="$HOME/apps/fieldreport-api"
@@ -73,7 +76,7 @@ else
   umask 077
   sed -e "s#__PORT__#$PORT#g" -e "s#__HOME__#$HOME#g" -e "s#__ADMIN_KEY__#$ADMIN_KEY#g" "$TEMPLATE" > "$ENV_FILE"
   umask 022
-  echo "   utworzono (Admin__Key wylosowany; odczyt: grep ^Admin__Key $ENV_FILE)"
+  echo "   utworzono (Admin__Key wylosowany). UZUPEŁNIJ hasło bazy: __PGSQL_PASSWORD__ w $ENV_FILE"
 fi
 chmod 600 "$ENV_FILE"
 
