@@ -43,7 +43,7 @@ public static class HomePage
           <table>
             <tr><td><code>POST /api/auth/login</code></td><td>logowanie → tokeny</td></tr>
             <tr><td><code>POST /api/auth/refresh</code></td><td>nowy token</td></tr>
-            <tr><td><code>GET /api/reports?updatedSince=</code></td><td>zmienione zgłoszenia</td></tr>
+            <tr><td><code>GET /api/reports</code></td><td>zgłoszenia technika</td></tr>
             <tr><td><code>GET|PUT /api/reports/{id}</code></td><td>szczegóły / upsert</td></tr>
             <tr><td><code>GET|PUT /api/reports/{id}/photo</code></td><td>zdjęcie (multipart)</td></tr>
             <tr><td><code>POST /api/devices</code>, <code>DELETE /api/devices/{token}</code></td><td>rejestracja push</td></tr>

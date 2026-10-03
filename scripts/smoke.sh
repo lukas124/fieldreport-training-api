@@ -5,7 +5,7 @@
 #   scripts/smoke.sh https://mobilny.dev/maui/podstawowe
 #   ADMIN_KEY=... scripts/smoke.sh <baseUrl>   # na końcu usuwa dane technika smoke (admin reset)
 #
-# Przebieg: health → login (+401) → refresh → PUT ×2 (201/200) → GET lista/szczegóły/updatedSince →
+# Przebieg: health → login (+401) → refresh → PUT ×2 (201/200) → GET lista/szczegóły →
 # zdjęcie PUT/GET → devices POST → dispatcher technicians/reports/status → DELETE device → [reset].
 set -euo pipefail
 
@@ -56,15 +56,12 @@ req 401 GET /api/reports
 ID="$(uuid)"
 REPORT="{\"id\":\"$ID\",\"title\":\"Smoke: awaria pompy\",\"description\":\"test\",\"priority\":\"High\",\"status\":\"New\",\"createdAt\":\"2026-09-26T08:15:00+00:00\"}"
 req 201 PUT "/api/reports/$ID" "${AUTH[@]}" -H 'Content-Type: application/json' -d "$REPORT"
-FIRST_UPDATED="$(json_str "$TMP/body" updatedAt)"
 req 200 PUT "/api/reports/$ID" "${AUTH[@]}" -H 'Content-Type: application/json' -d "${REPORT/\"New\"/\"InProgress\"}"
 contains '"status":"InProgress"'
 
 req 200 GET /api/reports "${AUTH[@]}"
 [ "$(grep -o "\"id\":\"$ID\"" "$TMP/body" | wc -l | tr -d ' ')" = "1" ] || fail "PUT ×2 nie dał dokładnie 1 rekordu"
 req 200 GET "/api/reports/$ID" "${AUTH[@]}"
-req 200 GET "/api/reports?updatedSince=$(printf %s "$FIRST_UPDATED" | sed 's/+/%2B/g')" "${AUTH[@]}"
-contains "\"id\":\"$ID\""
 
 printf '\377\330\377\340smoke-jpeg\377\331' > "$TMP/photo.jpg"
 req 200 PUT "/api/reports/$ID/photo" "${AUTH[@]}" -F "photo=@$TMP/photo.jpg;type=image/jpeg"

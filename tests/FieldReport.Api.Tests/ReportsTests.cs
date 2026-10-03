@@ -77,43 +77,15 @@ public sealed class ReportsTests
     }
 
     [Test]
-    public async Task UpdatedSince_returns_only_later_changes()
+    public async Task List_returns_all_reports_newest_change_first()
     {
         var (client, _) = await Api.AuthorizedClientAsync(_factory);
-        var a = await Api.ReadAsync<ReportDto>(await Api.PutReportAsync(client, Api.NewReport(title: "Pierwsze")));
-        var b = await Api.ReadAsync<ReportDto>(await Api.PutReportAsync(client, Api.NewReport(title: "Drugie")));
+        var first = await Api.ReadAsync<ReportDto>(await Api.PutReportAsync(client, Api.NewReport(title: "Pierwsze")));
+        var second = await Api.ReadAsync<ReportDto>(await Api.PutReportAsync(client, Api.NewReport(title: "Drugie")));
 
-        var since = Uri.EscapeDataString(a.UpdatedAt.ToString("O"));
-        var changes = await client.GetFromJsonAsync<List<ReportDto>>($"api/reports?updatedSince={since}", Api.Json);
-        var everything = await client.GetFromJsonAsync<List<ReportDto>>("api/reports?updatedSince=", Api.Json);
-        var future = await client.GetFromJsonAsync<List<ReportDto>>($"api/reports?updatedSince={Uri.EscapeDataString(b.UpdatedAt.ToString("O"))}", Api.Json);
+        var list = await client.GetFromJsonAsync<List<ReportDto>>("api/reports", Api.Json);
 
-        Assert.That(changes!.Select(r => r.Id), Is.EqualTo(new[] { b.Id }));
-        Assert.That(everything, Has.Count.EqualTo(2));
-        Assert.That(everything![0].Id, Is.EqualTo(b.Id), "sortowanie od najnowszej zmiany");
-        Assert.That(future, Is.Empty);
-    }
-
-    [Test]
-    public async Task UpdatedSince_accepts_unescaped_plus_offset_like_the_app_client()
-    {
-        // klient: $"api/reports?updatedSince={since:O}" bez EscapeDataString — "+02:00" dociera jako spacja
-        var (client, _) = await Api.AuthorizedClientAsync(_factory);
-        await Api.PutReportAsync(client, Api.NewReport());
-        var since = new DateTimeOffset(2000, 1, 1, 10, 0, 0, TimeSpan.FromHours(2));
-
-        var response = await client.GetAsync($"api/reports?updatedSince={since:O}");
-
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(await Api.ReadAsync<List<ReportDto>>(response), Has.Count.EqualTo(1));
-    }
-
-    [Test]
-    public async Task UpdatedSince_invalid_date_returns_400()
-    {
-        var (client, _) = await Api.AuthorizedClientAsync(_factory);
-        var response = await client.GetAsync("api/reports?updatedSince=wczoraj");
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(list!.Select(r => r.Id), Is.EqualTo(new[] { second.Id, first.Id }));
     }
 
     [Test]

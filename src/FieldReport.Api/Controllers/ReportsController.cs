@@ -17,27 +17,12 @@ namespace FieldReport.Api.Controllers;
 [Produces("application/json")]
 public sealed class ReportsController(DataStore store, PhotoUrlSigner photoUrls, IOptions<StorageOptions> storage) : ControllerBase
 {
-    /// <summary>Zgłoszenia technika zmienione po dacie <c>updatedSince</c> (puste = wszystkie).</summary>
-    /// <remarks>
-    /// Porównanie: `updatedAt &gt; updatedSince` (czas serwera, UTC). Sortowanie od najnowszej zmiany.
-    /// Format daty ISO 8601, np. `2026-09-26T08:00:00Z` albo `2026-09-26T10:00:00.0000000+02:00`
-    /// (niezakodowany „+” też jest akceptowany).
-    /// </remarks>
-    /// <param name="updatedSince" example="2026-09-26T08:00:00Z">Data ostatniej synchronizacji (ISO 8601) lub puste.</param>
+    /// <summary>Wszystkie zgłoszenia zalogowanego technika, od ostatnio zmienionego.</summary>
     /// <response code="200">Lista zgłoszeń (może być pusta).</response>
-    /// <response code="400">Niepoprawny format daty.</response>
     [HttpGet]
     [ProducesResponseType<List<ReportDto>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
-    public ActionResult<List<ReportDto>> GetChanges([FromQuery] string? updatedSince)
-    {
-        if (!QueryDates.TryParse(updatedSince, out var since))
-        {
-            return Problem(title: "Niepoprawna data", detail: "updatedSince musi być datą w formacie ISO 8601, np. 2026-09-26T08:00:00Z.",
-                statusCode: StatusCodes.Status400BadRequest);
-        }
-        return store.GetReports(User.Email(), since).Select(r => r.ToDto(Request)).ToList();
-    }
+    public ActionResult<List<ReportDto>> GetAll() =>
+        store.GetReports(User.Email()).Select(r => r.ToDto(Request)).ToList();
 
     /// <summary>Szczegóły zgłoszenia.</summary>
     /// <param name="id" example="3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f">Identyfikator zgłoszenia.</param>

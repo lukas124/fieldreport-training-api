@@ -41,18 +41,12 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
 
     // ---------- zgłoszenia ----------
 
-    /// <summary>Zgłoszenia technika zmienione po <paramref name="updatedSince"/> (null = wszystkie), od najnowszej zmiany.</summary>
-    public IReadOnlyList<Report> GetReports(string email, DateTimeOffset? updatedSince)
-    {
-        var key = Normalize(email);
-        var query = db.Reports.AsNoTracking().Where(r => r.TechnicianEmail == key);
-        if (updatedSince is { } since)
-        {
-            var sinceUtc = since.ToUniversalTime();
-            query = query.Where(r => r.UpdatedAt > sinceUtc);
-        }
-        return query.OrderByDescending(r => r.UpdatedAt).ToList();
-    }
+    /// <summary>Wszystkie zgłoszenia technika, od ostatnio zmienionego.</summary>
+    public IReadOnlyList<Report> GetReports(string email) =>
+        db.Reports.AsNoTracking()
+            .Where(r => r.TechnicianEmail == Normalize(email))
+            .OrderByDescending(r => r.UpdatedAt)
+            .ToList();
 
     public Report? GetReport(string email, Guid id) =>
         db.Reports.AsNoTracking().FirstOrDefault(r => r.TechnicianEmail == Normalize(email) && r.Id == id);
@@ -68,7 +62,7 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
             existing.Description = dto.Description;
             existing.Priority = dto.Priority;
             existing.Status = dto.Status;
-            existing.UpdatedAt = NextStamp();
+            existing.UpdatedAt = Now();
             db.SaveChanges();
             return (UpsertOutcome.Updated, existing);
         }
@@ -77,7 +71,7 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
         if (db.Reports.Count(r => r.TechnicianEmail == key) >= _options.MaxReportsPerTechnician)
             return (UpsertOutcome.LimitExceeded, null);
 
-        var now = NextStamp();
+        var now = Now();
         var created = new Report
         {
             TechnicianEmail = key,
@@ -110,7 +104,7 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
         GetOrAddTechnician(email, name);
         if (db.Reports.Count(r => r.TechnicianEmail == key) >= _options.MaxReportsPerTechnician) return null;
 
-        var now = NextStamp();
+        var now = Now();
         var report = new Report
         {
             TechnicianEmail = key,
@@ -147,7 +141,7 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
         var report = db.Reports.FirstOrDefault(r => r.TechnicianEmail == Normalize(email) && r.Id == id);
         if (report is null) return null;
         report.Status = status;
-        report.UpdatedAt = NextStamp();
+        report.UpdatedAt = Now();
         db.SaveChanges();
         return report;
     }
@@ -184,7 +178,7 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
 
         report.PhotoFile = fileName;
         report.PhotoContentType = contentType;
-        report.UpdatedAt = NextStamp();
+        report.UpdatedAt = Now();
         await db.SaveChangesAsync(ct);
         return report;
     }
@@ -277,24 +271,7 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
         return technician;
     }
 
-    private static readonly object StampLock = new();
-    private static DateTimeOffset _lastStamp = DateTimeOffset.MinValue;
-
-    /// <summary>
-    /// Znacznik czasu zmiany: UTC z dokładnością do mikrosekundy (tyle przechowuje PostgreSQL) i zawsze większy
-    /// od poprzedniego — dwie zmiany nigdy nie mają tego samego <c>UpdatedAt</c>, więc <c>updatedSince</c> niczego nie gubi.
-    /// </summary>
-    private DateTimeOffset NextStamp()
-    {
-        lock (StampLock)
-        {
-            var now = Now();
-            if (now <= _lastStamp) now = _lastStamp.AddTicks(10);
-            _lastStamp = now;
-            return now;
-        }
-    }
-
+    /// <summary>Bieżący czas UTC z dokładnością do mikrosekundy (tyle przechowuje PostgreSQL).</summary>
     private DateTimeOffset Now() => Microseconds(time.GetUtcNow());
 
     private static DateTimeOffset Microseconds(DateTimeOffset value) =>

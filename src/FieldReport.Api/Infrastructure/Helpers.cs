@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using FieldReport.Api.Contracts;
@@ -22,28 +21,6 @@ public static class ReportMapper
             ? null
             : request.HttpContext.RequestServices.GetRequiredService<PhotoUrlSigner>().CreateUrl(request, r.TechnicianEmail, r.Id)
     };
-}
-
-public static class QueryDates
-{
-    /// <summary>
-    /// Parsuje <c>updatedSince</c> w ISO 8601. Toleruje niezakodowany „+” strefy czasowej
-    /// (<c>?updatedSince=2026-09-26T10:00:00.0000000+02:00</c> dociera jako spacja), bo klient
-    /// składający adres przez interpolację <c>{since:O}</c> bez <c>Uri.EscapeDataString</c> wysyła go niezakodowanego.
-    /// </summary>
-    public static bool TryParse(string? value, out DateTimeOffset? result)
-    {
-        result = null;
-        if (string.IsNullOrWhiteSpace(value)) return true;
-        var fixedValue = value.Trim().Replace(' ', '+');
-        if (DateTimeOffset.TryParse(fixedValue, CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
-        {
-            result = parsed;
-            return true;
-        }
-        return false;
-    }
 }
 
 public static class Secrets

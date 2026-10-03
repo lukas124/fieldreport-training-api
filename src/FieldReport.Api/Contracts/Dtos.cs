@@ -52,7 +52,7 @@ public sealed class ReportDto
     /// <example>2026-09-26T08:15:00+00:00</example>
     public DateTimeOffset CreatedAt { get; set; }
 
-    /// <summary>Czas ostatniej zmiany na serwerze (UTC) — ustawia serwer; według niego działa <c>updatedSince</c>.</summary>
+    /// <summary>Czas ostatniej zmiany na serwerze (UTC) — ustawia serwer.</summary>
     /// <example>2026-09-26T08:20:31.1234567+00:00</example>
     public DateTimeOffset UpdatedAt { get; set; }
 

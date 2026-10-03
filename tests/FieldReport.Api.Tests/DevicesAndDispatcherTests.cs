@@ -120,9 +120,9 @@ public sealed class DispatcherWithoutFirebaseTests
         Assert.That(result.Push.Type, Is.EqualTo(PushTypes.ReportStatusChanged));
         Assert.That(result.Push.Skipped, Is.True);
 
-        var since = Uri.EscapeDataString(report.UpdatedAt.ToString("O"));
-        var changes = await client.GetFromJsonAsync<List<ReportDto>>($"api/reports?updatedSince={since}", Api.Json);
-        Assert.That(changes!.Single().Status, Is.EqualTo(ReportStatus.Done));
+        var changed = await client.GetFromJsonAsync<ReportDto>($"api/reports/{report.Id}", Api.Json);
+        Assert.That(changed!.Status, Is.EqualTo(ReportStatus.Done));
+        Assert.That(changed.UpdatedAt, Is.GreaterThan(report.UpdatedAt));
     }
 
     [Test]

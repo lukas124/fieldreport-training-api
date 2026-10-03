@@ -17,7 +17,7 @@ rejestracja urządzeń i wysyłka push przez **Firebase Admin SDK** (FCM HTTP v1
 |---|---|---|
 | POST | `/api/auth/login` | `{ email, pin }` → `{ accessToken, refreshToken, expiresIn, technicianName }` (dowolny poprawny e-mail + PIN `1234`) |
 | POST | `/api/auth/refresh` | `{ refreshToken }` → nowa para tokenów (refresh jednorazowy) |
-| GET | `/api/reports?updatedSince=` | zgłoszenia technika zmienione po dacie (ISO 8601; pusto = wszystkie) |
+| GET | `/api/reports` | wszystkie zgłoszenia technika (od ostatnio zmienionego) |
 | GET | `/api/reports/{id}` | szczegóły |
 | PUT | `/api/reports/{id}` | idempotentny upsert (`201` nowe / `200` aktualizacja; `id` od aplikacji) |
 | PUT / GET | `/api/reports/{id}/photo` | zdjęcie (multipart, pole `photo`; JPEG/PNG/WebP/HEIC, maks. 5 MB) |
