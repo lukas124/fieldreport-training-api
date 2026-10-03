@@ -48,10 +48,12 @@ public sealed class ReportsController(DataStore store, PhotoUrlSigner photoUrls,
     /// <response code="201">Utworzono nowe zgłoszenie.</response>
     /// <response code="200">Zaktualizowano istniejące zgłoszenie.</response>
     /// <response code="400">Błędne dane (walidacja, niezgodne id).</response>
+    /// <response code="409">Nowe zgłoszenie przekroczyłoby limit zgłoszeń na technika (`Storage:MaxReportsPerTechnician`, domyślnie 500). Aktualizacja istniejącego nie zwraca 409.</response>
     [HttpPut("{id:guid}")]
     [ProducesResponseType<ReportDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ReportDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public ActionResult<ReportDto> Upsert(Guid id, [FromBody] ReportDto report)
     {
         if (id == Guid.Empty)
