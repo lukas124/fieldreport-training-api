@@ -7,7 +7,7 @@
 # Układ ($APP_ROOT = ~/apps/fieldreport-api):
 #   app/                  artefakt `dotnet publish` (jedyny katalog czyszczony przez deploy: rsync --delete)
 #   fieldreport-api.env   konfiguracja (chmod 600) — czytana przy każdym starcie
-#   data/                 dane (data.json, zdjęcia, klucz JWT)
+#   data/                 zdjęcia (photos/) i klucz podpisu JWT; dane zgłoszeń są w PostgreSQL
 #   secrets/              klucz konta serwisowego Firebase
 #   logs/api.log          stdout/stderr (rotacja przy starcie i w watchdogu)
 #   run/api.pid           pidfile
