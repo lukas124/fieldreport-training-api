@@ -1,0 +1,11 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/FieldReport.Api/FieldReport.Api.csproj" />
+    <Project Path="tests/FieldReport.Api.Tests/FieldReport.Api.Tests.csproj" />
+  </Folder>
+</Solution>

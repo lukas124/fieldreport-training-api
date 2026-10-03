@@ -27,7 +27,7 @@ public sealed class PushMessageTests
         });
     }
 
-    // QA-A06: bez EventTimestamp SDK wysyła event_time = 0001-01-01 → zasobnik Androida „2032y”
+    // event_time musi być czasem wysłania (inaczej Android pokazuje datę 0001-01-01)
     [Test]
     public void Event_time_is_send_time_not_min_value()
     {

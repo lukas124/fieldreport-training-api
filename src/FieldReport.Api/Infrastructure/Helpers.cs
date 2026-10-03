@@ -29,7 +29,7 @@ public static class QueryDates
     /// <summary>
     /// Parsuje <c>updatedSince</c> w ISO 8601. Toleruje niezakodowany „+” strefy czasowej
     /// (<c>?updatedSince=2026-09-26T10:00:00.0000000+02:00</c> dociera jako spacja), bo klient
-    /// ze scenariusza składa adres przez interpolację <c>{since:O}</c> bez <c>Uri.EscapeDataString</c>.
+    /// składający adres przez interpolację <c>{since:O}</c> bez <c>Uri.EscapeDataString</c> wysyła go niezakodowanego.
     /// </summary>
     public static bool TryParse(string? value, out DateTimeOffset? result)
     {

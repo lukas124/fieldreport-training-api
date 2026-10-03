@@ -97,7 +97,7 @@ public sealed class ReportsTests
     [Test]
     public async Task UpdatedSince_accepts_unescaped_plus_offset_like_the_app_client()
     {
-        // klient ze scenariusza: $"api/reports?updatedSince={since:O}" — bez EscapeDataString, "+02:00" dociera jako spacja
+        // klient: $"api/reports?updatedSince={since:O}" bez EscapeDataString — "+02:00" dociera jako spacja
         var (client, _) = await Api.AuthorizedClientAsync(_factory);
         await Api.PutReportAsync(client, Api.NewReport());
         var since = new DateTimeOffset(2000, 1, 1, 10, 0, 0, TimeSpan.FromHours(2));

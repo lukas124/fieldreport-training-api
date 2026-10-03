@@ -2,7 +2,7 @@
 # Smoke test API FieldReport przez curl (bez jq).
 #
 #   scripts/smoke.sh http://localhost:5080
-#   scripts/smoke.sh https://szkolenia.strefakodera.pl/maui/podstawowe
+#   scripts/smoke.sh https://mobilny.dev/maui/podstawowe
 #   ADMIN_KEY=... scripts/smoke.sh <baseUrl>   # na końcu usuwa dane technika smoke (admin reset)
 #
 # Przebieg: health → login (+401) → refresh → PUT ×2 (201/200) → GET lista/szczegóły/updatedSince →

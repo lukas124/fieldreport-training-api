@@ -4,15 +4,15 @@ using FieldReport.Api.Contracts;
 
 namespace FieldReport.Api.Tests;
 
-/// <summary>Regresje z raportu QA (docs/QA_RAPORT.md w materiałach): QA-A01…A05 + limit 429.</summary>
-public sealed class QaRegressionTests
+/// <summary>Reguły walidacji i zachowania brzegowe: tytuł po Trim, niejednoznaczne id, pole zdjęcia, statusy, PIN, limit logowania.</summary>
+public sealed class ValidationRulesTests
 {
     private ApiFactory _factory = null!;
 
     [OneTimeSetUp] public void SetUp() => _factory = new ApiFactory();
     [OneTimeTearDown] public void TearDown() => _factory.Dispose();
 
-    // QA-A01: walidacja długości po Trim (tak jak zapis)
+    // długość tytułu sprawdzana po obcięciu spacji z brzegów
     [TestCase("  ab  ", HttpStatusCode.BadRequest)]
     [TestCase("ab\n\n", HttpStatusCode.BadRequest)]
     [TestCase("   ", HttpStatusCode.BadRequest)]
@@ -48,7 +48,7 @@ public sealed class QaRegressionTests
             Assert.That((await Api.ReadAsync<DispatcherResult>(response)).Reports[0].Report.Title, Is.EqualTo("xyz"));
     }
 
-    // QA-A02: niejednoznaczne id w PATCH dyspozytora
+    // to samo id u dwóch techników: dyspozytor musi wskazać technika
     [Test]
     public async Task Patch_status_with_id_shared_by_two_technicians_requires_email_and_touches_only_target()
     {
@@ -75,7 +75,7 @@ public sealed class QaRegressionTests
         Assert.That(wrongTech.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
 
-    // QA-A03: tylko pole multipart "photo"
+    // zdjęcie przyjmowane tylko z pola multipart "photo"
     [Test]
     public async Task Photo_in_other_multipart_field_returns_400()
     {
@@ -89,7 +89,7 @@ public sealed class QaRegressionTests
         Assert.That(await response.Content.ReadAsStringAsync(), Does.Contain("Brak pliku"));
     }
 
-    // QA-A04 (decyzja): serwer celowo przyjmuje dowolny status — udokumentowane w Swaggerze
+    // serwer przyjmuje dowolny status (kolejność pilnuje aplikacja) i opisuje to w Swaggerze
     [Test]
     public async Task Status_may_go_backwards_by_design_and_swagger_says_so()
     {
@@ -104,7 +104,7 @@ public sealed class QaRegressionTests
         Assert.That(swagger, Does.Contain("NIE pilnuje kolejności"));
     }
 
-    // QA-A05: PIN porównywany dokładnie
+    // PIN porównywany dokładnie, bez obcinania spacji
     [TestCase("1234 ")]
     [TestCase(" 1234")]
     [TestCase("12345")]
@@ -114,7 +114,7 @@ public sealed class QaRegressionTests
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 
-    // Informacyjne z QA: 429 działa, tylko limit jest wyższy niż 25 prób
+    // po przekroczeniu limitu logowań z jednego IP → 429
     [Test]
     public async Task Login_rate_limit_returns_429_after_limit()
     {

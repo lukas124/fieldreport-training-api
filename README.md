@@ -6,7 +6,7 @@ rejestracja urządzeń i wysyłka push przez **Firebase Admin SDK** (FCM HTTP v1
 
 | Gdzie | Adres |
 |---|---|
-| Publicznie | `https://szkolenia.strefakodera.pl/maui/podstawowe/` (Swagger: `.../swagger`, health: `.../api/health`) |
+| Publicznie | `https://mobilny.dev/maui/podstawowe/` (Swagger: `.../swagger`, health: `.../api/health`) |
 | Lokalnie | `http://localhost:5080` (emulator Android: `http://10.0.2.2:5080`) |
 
 ## Kontrakt
@@ -67,7 +67,7 @@ Bez poświadczeń Firebase API działa normalnie, a dyspozytor zwraca `push.skip
 ```bash
 dotnet test                                   # NUnit + WebApplicationFactory (bez sieci, bez Firebase)
 scripts/smoke.sh http://localhost:5080        # smoke przez curl na działającym API
-ADMIN_KEY=... scripts/smoke.sh https://szkolenia.strefakodera.pl/maui/podstawowe   # + sprzątanie po sobie
+ADMIN_KEY=... scripts/smoke.sh https://mobilny.dev/maui/podstawowe   # + sprzątanie po sobie
 ```
 
 ## Wdrożenie
@@ -107,7 +107,7 @@ ssh mydevil sh apps/fieldreport-api/bin/setup-mydevil.sh
 dotnet test
 dotnet publish src/FieldReport.Api -c Release -o artifacts/publish
 MYDEVIL_HOST=mydevil bash deploy/mydevil/deploy.sh      # alias z ~/.ssh/config
-scripts/smoke.sh https://szkolenia.strefakodera.pl/maui/podstawowe
+scripts/smoke.sh https://mobilny.dev/maui/podstawowe
 ```
 
 ### Wdrożenie przez GitHub Actions
@@ -122,7 +122,7 @@ którego publiczna część jest w `~/.ssh/authorized_keys` na MyDevil), opcjona
 ```bash
 scp firebase-sa.json mydevil:apps/fieldreport-api/secrets/firebase-sa.json
 ssh mydevil 'chmod 600 apps/fieldreport-api/secrets/firebase-sa.json && sh apps/fieldreport-api/bin/run.sh restart'
-curl -s https://szkolenia.strefakodera.pl/maui/podstawowe/api/health   # firebaseConfigured: true
+curl -s https://mobilny.dev/maui/podstawowe/api/health   # firebaseConfigured: true
 ```
 
 ### Operacje
@@ -131,5 +131,5 @@ curl -s https://szkolenia.strefakodera.pl/maui/podstawowe/api/health   # firebas
 ssh mydevil sh apps/fieldreport-api/bin/run.sh status        # restart | stop | start | health
 ssh mydevil tail -n 100 apps/fieldreport-api/logs/api.log
 ssh mydevil grep ^Admin__Key apps/fieldreport-api/fieldreport-api.env
-curl -X POST -H "X-Admin-Key: <klucz>" https://szkolenia.strefakodera.pl/maui/podstawowe/api/admin/reset
+curl -X POST -H "X-Admin-Key: <klucz>" https://mobilny.dev/maui/podstawowe/api/admin/reset
 ```

@@ -69,7 +69,7 @@ public sealed class FirebasePushSender : IPushSender
             var projectId = ReadProjectId(path);
             var app = FirebaseApp.GetInstance(AppName) ?? FirebaseApp.Create(new AppOptions
             {
-                // tak jak w scenariuszu: GetApplicationDefault() czyta GOOGLE_APPLICATION_CREDENTIALS
+                // GetApplicationDefault() czyta plik wskazany w GOOGLE_APPLICATION_CREDENTIALS
                 Credential = fromConfig
                     ? CredentialFactory.FromFile<ServiceAccountCredential>(path).ToGoogleCredential()
                     : GoogleCredential.GetApplicationDefault(),
@@ -117,14 +117,13 @@ public sealed class FirebasePushSender : IPushSender
 
     /// <summary>
     /// Wiadomość FCM: notification (tytuł/treść), data (<c>type</c>, <c>reportId</c>), Android: priorytet wysoki,
-    /// kanał <c>reports</c> i <c>EventTimestamp</c> = czas wysłania. Bez tego Admin SDK wysyła
-    /// <c>event_time = 0001-01-01T00:00:00Z</c> (DateTime.MinValue) i zasobnik Androida pokazuje „2032y” (QA-A06).
+    /// kanał <c>reports</c> i <c>EventTimestamp</c> = czas wysłania (Admin SDK zawsze wysyła to pole, więc musi mieć
+    /// prawdziwą wartość — inaczej Android pokaże przy powiadomieniu datę 0001-01-01).
     /// </summary>
     internal static Message BuildMessage(string token, PushMessage message, DateTime utcNow) => new()
     {
-        // FirebaseAdmin 3.7 oznacza Message.Token jako [Obsolete] na rzecz Fid, ale FCM HTTP v1 nadal adresuje
-        // urządzenie tokenem rejestracyjnym z aplikacji (FirebaseMessaging.Instance.GetToken) — Fid to inny
-        // identyfikator (instalacji). Zostajemy przy Token, zgodnie ze scenariuszem szkolenia.
+        // Token = token rejestracyjny FCM z aplikacji. FirebaseAdmin 3.7 oznacza tę właściwość jako [Obsolete]
+        // (sugeruje Fid — identyfikator instalacji), ale FCM HTTP v1 adresuje urządzenie właśnie tokenem.
 #pragma warning disable CS0618
         Token = token,
 #pragma warning restore CS0618
