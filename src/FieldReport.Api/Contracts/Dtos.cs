@@ -60,8 +60,11 @@ public sealed class ReportDto
     /// <example>false</example>
     public bool HasPhoto { get; set; }
 
-    /// <summary>Pełny adres zdjęcia (<c>GET</c>, wymaga tokenu) albo null. Tylko do odczytu.</summary>
-    /// <example>http://10.0.2.2:5080/api/reports/3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f/photo</example>
+    /// <summary>
+    /// Podpisany adres zdjęcia (<c>GET</c> bez tokenu, ważny 60 min) albo null. Tylko do odczytu.
+    /// Po wygaśnięciu (403) pobierz zgłoszenie ponownie, żeby dostać nowy adres.
+    /// </summary>
+    /// <example>https://mobilny.dev/maui/podstawowe/api/reports/3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f/photo?tech=a0a4c0b6a5739026&amp;exp=1791030917&amp;sig=21IQoqdOL7wRaAkFp1VeiMct35a7cO6rty4XQWVk_Zo</example>
     public string? PhotoUrl { get; set; }
 }
 

@@ -89,4 +89,16 @@ public sealed class SignedPhotoUrlTests
         var response = await _factory.CreateClient().GetAsync($"api/reports/{report.Id}/photo");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
+
+    [Test]
+    public async Task Swagger_describes_photo_url_as_signed_without_token()
+    {
+        var json = await _factory.CreateClient().GetStringAsync("swagger/v1/swagger.json");
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var description = doc.RootElement.GetProperty("components").GetProperty("schemas").GetProperty("ReportDto")
+            .GetProperty("properties").GetProperty("photoUrl").GetProperty("description").GetString();
+
+        Assert.That(description, Does.Contain("Podpisany adres").And.Contain("bez tokenu"));
+        Assert.That(description, Does.Not.Contain("wymaga tokenu"));
+    }
 }
