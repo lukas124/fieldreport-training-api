@@ -106,9 +106,9 @@ public static class Api
         return (client, email);
     }
 
-    public static ReportDto NewReport(Guid? id = null, string title = "Awaria pompy") => new()
+    /// <summary>Dane nowego zgłoszenia (bez Id — nadaje je serwer przy POST).</summary>
+    public static ReportDto NewReport(string title = "Awaria pompy") => new()
     {
-        Id = id ?? Guid.NewGuid(),
         Title = title,
         Description = "Pompa w węźle C2 nie startuje.",
         Priority = ReportPriority.High,
@@ -116,6 +116,27 @@ public static class Api
         CreatedAt = new DateTimeOffset(2026, 9, 26, 8, 15, 0, TimeSpan.Zero)
     };
 
+    /// <summary>POST api/reports z nagłówkiem Idempotency-Key (null = bez nagłówka).</summary>
+    public static Task<HttpResponseMessage> PostReportAsync(HttpClient client, ReportDto report, string? idempotencyKey)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "api/reports") { Content = JsonContent.Create(report, options: Json) };
+        if (idempotencyKey is not null) request.Headers.Add("Idempotency-Key", idempotencyKey);
+        return client.SendAsync(request);
+    }
+
+    /// <summary>Nowe zgłoszenie (POST z nowym kluczem). Id nadane przez serwer wpisuje do <paramref name="report"/>.</summary>
+    public static async Task<HttpResponseMessage> CreateReportAsync(HttpClient client, ReportDto report)
+    {
+        var response = await PostReportAsync(client, report, $"\"{Guid.NewGuid()}\"");
+        // treść czytamy tu i podmieniamy na kopię, żeby test mógł ją przeczytać jeszcze raz
+        var body = await response.Content.ReadAsStringAsync();
+        var mediaType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
+        response.Content = new StringContent(body, System.Text.Encoding.UTF8, mediaType);
+        if (response.IsSuccessStatusCode) report.Id = JsonSerializer.Deserialize<ReportDto>(body, Json)!.Id;
+        return response;
+    }
+
+    /// <summary>Aktualizacja istniejącego zgłoszenia (PUT api/reports/{id}).</summary>
     public static Task<HttpResponseMessage> PutReportAsync(HttpClient client, ReportDto report) =>
         client.PutAsJsonAsync($"api/reports/{report.Id}", report, Json);
 

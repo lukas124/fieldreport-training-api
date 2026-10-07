@@ -21,7 +21,7 @@ public enum ReportStatus
 /// <summary>Zgłoszenie serwisowe (spójne z <c>ReportDto</c> aplikacji).</summary>
 public sealed class ReportDto
 {
-    /// <summary>Identyfikator nadawany przez aplikację (dla PUT musi być równy <c>{id}</c> z adresu lub pusty).</summary>
+    /// <summary>Identyfikator nadawany przez serwer (POST go pomija; w PUT musi być równy <c>{id}</c> z adresu lub pusty).</summary>
     /// <example>3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f</example>
     public Guid Id { get; set; }
 
@@ -48,7 +48,7 @@ public sealed class ReportDto
     /// <example>New</example>
     public ReportStatus Status { get; set; } = ReportStatus.New;
 
-    /// <summary>Data utworzenia (ISO 8601). Przy pierwszym PUT brana z aplikacji (pusta = czas serwera), potem niezmienna.</summary>
+    /// <summary>Data utworzenia (ISO 8601). Przy POST brana z aplikacji (pusta = czas serwera), potem niezmienna.</summary>
     /// <example>2026-09-26T08:15:00+00:00</example>
     public DateTimeOffset CreatedAt { get; set; }
 

@@ -75,7 +75,9 @@ var app = builder.Build();
 // tabele tworzone przy pierwszym starcie (bez migracji — patrz README → Baza danych)
 using (var scope = app.Services.CreateScope())
 {
-    scope.ServiceProvider.GetRequiredService<FieldReportDbContext>().Database.EnsureCreated();
+    var db = scope.ServiceProvider.GetRequiredService<FieldReportDbContext>();
+    db.Database.EnsureCreated();
+    db.CreateIdempotencyKeysTableIfMissing(); // tabela dodana później: dla bazy założonej wcześniej
 }
 
 // ---------- potok ----------

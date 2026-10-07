@@ -5,7 +5,8 @@
 #   scripts/smoke.sh https://mobilny.dev/maui/podstawowe
 #   ADMIN_KEY=... scripts/smoke.sh <baseUrl>   # na końcu usuwa dane technika smoke (admin reset)
 #
-# Przebieg: health → login (+401) → refresh → PUT ×2 (201/200) → GET lista/szczegóły →
+# Przebieg: health → login (+401) → refresh → POST z Idempotency-Key ×2 (201, to samo id) + 422 + 400 →
+# PUT (200, brak → 404) → GET lista/szczegóły →
 # zdjęcie PUT/GET → devices POST → dispatcher technicians/reports/status → DELETE device → [reset].
 set -euo pipefail
 
@@ -53,14 +54,23 @@ AUTH=(-H "Authorization: Bearer $TOKEN")
 
 req 401 GET /api/reports
 
-ID="$(uuid)"
-REPORT="{\"id\":\"$ID\",\"title\":\"Smoke: awaria pompy\",\"description\":\"test\",\"priority\":\"High\",\"status\":\"New\",\"createdAt\":\"2026-09-26T08:15:00+00:00\"}"
-req 201 PUT "/api/reports/$ID" "${AUTH[@]}" -H 'Content-Type: application/json' -d "$REPORT"
+KEY="$(uuid)"
+REPORT='{"title":"Smoke: awaria pompy","description":"test","priority":"High","status":"New","createdAt":"2026-09-26T08:15:00+00:00"}'
+req 201 POST /api/reports "${AUTH[@]}" -H "Idempotency-Key: \"$KEY\"" -H 'Content-Type: application/json' -d "$REPORT"
+ID="$(json_str "$TMP/body" id)"
+[ -n "$ID" ] || fail "brak id w odpowiedzi POST"
+# powtórka z tym samym kluczem (np. zgubiona odpowiedź) → to samo zgłoszenie, bez drugiego zapisu
+req 201 POST /api/reports "${AUTH[@]}" -H "Idempotency-Key: \"$KEY\"" -H 'Content-Type: application/json' -d "$REPORT"
+[ "$(json_str "$TMP/body" id)" = "$ID" ] || fail "powtórka POST z tym samym kluczem zwróciła inne id"
+req 422 POST /api/reports "${AUTH[@]}" -H "Idempotency-Key: \"$KEY\"" -H 'Content-Type: application/json' -d "${REPORT/test/inna treść}"
+req 400 POST /api/reports "${AUTH[@]}" -H 'Content-Type: application/json' -d "$REPORT"
 req 200 PUT "/api/reports/$ID" "${AUTH[@]}" -H 'Content-Type: application/json' -d "${REPORT/\"New\"/\"InProgress\"}"
 contains '"status":"InProgress"'
+req 404 PUT "/api/reports/$(uuid)" "${AUTH[@]}" -H 'Content-Type: application/json' -d "$REPORT"
 
 req 200 GET /api/reports "${AUTH[@]}"
-[ "$(grep -o "\"id\":\"$ID\"" "$TMP/body" | wc -l | tr -d ' ')" = "1" ] || fail "PUT ×2 nie dał dokładnie 1 rekordu"
+[ "$(grep -o "\"id\":\"$ID\"" "$TMP/body" | wc -l | tr -d ' ')" = "1" ] || fail "POST ×2 z tym samym kluczem nie dał dokładnie 1 rekordu"
+[ "$(grep -o '"title":"Smoke: awaria pompy"' "$TMP/body" | wc -l | tr -d ' ')" = "1" ] || fail "więcej niż 1 zgłoszenie smoke"
 req 200 GET "/api/reports/$ID" "${AUTH[@]}"
 
 printf '\377\330\377\340smoke-jpeg\377\331' > "$TMP/photo.jpg"

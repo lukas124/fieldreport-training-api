@@ -111,7 +111,7 @@ public sealed class DispatcherWithoutFirebaseTests
     public async Task Change_status_updates_report_and_updatedAt()
     {
         var (client, _) = await Api.AuthorizedClientAsync(_factory);
-        var report = await Api.ReadAsync<ReportDto>(await Api.PutReportAsync(client, Api.NewReport()));
+        var report = await Api.ReadAsync<ReportDto>(await Api.CreateReportAsync(client, Api.NewReport()));
 
         var response = await _factory.CreateClient().PatchAsJsonAsync($"api/dispatcher/reports/{report.Id}/status", new { status = "Done" });
 

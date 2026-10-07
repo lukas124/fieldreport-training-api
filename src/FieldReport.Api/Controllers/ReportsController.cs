@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using FieldReport.Api.Auth;
 using FieldReport.Api.Contracts;
 using FieldReport.Api.Data;
@@ -34,46 +35,94 @@ public sealed class ReportsController(DataStore store, PhotoUrlSigner photoUrls,
     public ActionResult<ReportDto> Get(Guid id) =>
         store.GetReport(User.Email(), id) is { } r ? r.ToDto(Request) : NotFoundProblem();
 
-    /// <summary>Utworzenie lub aktualizacja zgłoszenia (idempotentny upsert, <c>id</c> od aplikacji).</summary>
+    /// <summary>Nowe zgłoszenie (Id nadaje serwer). Wymaga nagłówka <c>Idempotency-Key</c>.</summary>
     /// <remarks>
-    /// Ponowienie tego samego `PUT` nie tworzy duplikatu — ten sam `id` zawsze nadpisuje ten sam rekord.
-    /// `id` w treści musi być równe `id` z adresu (albo puste). Serwer ustawia `updatedAt`, `hasPhoto` i `photoUrl`;
-    /// `createdAt` jest brany z pierwszego zapisu. Tytuł jest przycinany (Trim) przed walidacją 3–80 znaków.
-    /// Status: serwer NIE pilnuje kolejności przejść — zapisuje stan z urządzenia (reguła „tylko do przodu” jest w aplikacji).
+    /// Nagłówek `Idempotency-Key` (standard IETF „The Idempotency-Key HTTP Header Field”): aplikacja generuje
+    /// klucz (UUID) **raz** dla nowego zgłoszenia i wysyła go przy **każdej** próbie. Dzięki temu ponowienie po
+    /// zgubionej odpowiedzi nie tworzy duplikatu:
     ///
-    ///     PUT /api/reports/3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f
-    ///     { "id": "3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f", "title": "Awaria pompy", "description": "Nie startuje",
-    ///       "priority": "High", "status": "New", "createdAt": "2026-09-26T08:15:00+00:00" }
+    /// - pierwsze żądanie z kluczem → zapis zgłoszenia i klucza (razem), `201` ze zgłoszeniem i jego `id`;
+    /// - ten sam klucz i ta sama treść → `201` z tym samym zgłoszeniem (bez drugiego zapisu);
+    /// - ten sam klucz i inna treść → `422`;
+    /// - ten sam klucz przetwarzany w tej samej chwili przez inne żądanie → `409` (ponów później).
+    ///
+    /// Wartość wg standardu to napis w cudzysłowie (`"…"`); serwer przyjmuje też wartość bez cudzysłowu.
+    /// Klucz jest osobny dla każdego technika i ważny 24 h. `id` w treści jest pomijane. Serwer ustawia
+    /// `updatedAt`, `hasPhoto` i `photoUrl`; `createdAt` jest brany z aplikacji (pusty = czas serwera).
+    /// Tytuł jest przycinany (Trim) przed walidacją 3–80 znaków. Zdjęcie: potem `PUT /api/reports/{id}/photo` z `id` z odpowiedzi.
+    ///
+    ///     POST /api/reports
+    ///     Idempotency-Key: "8e03978e-40d5-43e8-bc93-6894a57f9324"
+    ///     { "title": "Awaria pompy", "description": "Nie startuje", "priority": "High", "status": "New",
+    ///       "createdAt": "2026-09-26T08:15:00+00:00" }
     /// </remarks>
-    /// <response code="201">Utworzono nowe zgłoszenie.</response>
-    /// <response code="200">Zaktualizowano istniejące zgłoszenie.</response>
-    /// <response code="400">Błędne dane (walidacja, niezgodne id).</response>
-    /// <response code="409">Nowe zgłoszenie przekroczyłoby limit zgłoszeń na technika (`Storage:MaxReportsPerTechnician`, domyślnie 500). Aktualizacja istniejącego nie zwraca 409.</response>
-    [HttpPut("{id:guid}")]
-    [ProducesResponseType<ReportDto>(StatusCodes.Status200OK)]
+    /// <param name="idempotencyKey" example="&quot;8e03978e-40d5-43e8-bc93-6894a57f9324&quot;">Klucz idempotencji (UUID, maks. 100 znaków).</param>
+    /// <param name="report">Dane zgłoszenia.</param>
+    /// <response code="201">Utworzono zgłoszenie (albo powtórka z tym samym kluczem — to samo zgłoszenie).</response>
+    /// <response code="400">Brak nagłówka Idempotency-Key albo błędne dane (walidacja).</response>
+    /// <response code="409">Ten sam klucz jest właśnie przetwarzany przez inne żądanie (ponów później) albo przekroczony limit zgłoszeń na technika (`Storage:MaxReportsPerTechnician`, domyślnie 500).</response>
+    /// <response code="422">Ten klucz był już użyty z inną treścią żądania.</response>
+    [HttpPost]
     [ProducesResponseType<ReportDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
-    public ActionResult<ReportDto> Upsert(Guid id, [FromBody] ReportDto report)
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public ActionResult<ReportDto> Create(
+        [FromHeader(Name = "Idempotency-Key")]
+        [Required(ErrorMessage = "Nagłówek Idempotency-Key jest wymagany (UUID generowany raz dla nowego zgłoszenia).")]
+        [StringLength(100, ErrorMessage = "Idempotency-Key może mieć maksymalnie 100 znaków.")]
+        string idempotencyKey,
+        [FromBody] ReportDto report)
     {
-        if (id == Guid.Empty)
-            return Problem(title: "Niepoprawny identyfikator", detail: "id nie może być pustym Guid.", statusCode: StatusCodes.Status400BadRequest);
-        if (report.Id != Guid.Empty && report.Id != id)
-            return Problem(title: "Niezgodny identyfikator", detail: "id w treści musi być równe id w adresie.", statusCode: StatusCodes.Status400BadRequest);
-
-        var (outcome, stored) = store.Upsert(User.Email(), User.Name(), id, report);
+        var key = idempotencyKey.Trim('"'); // wg standardu wartość jest w cudzysłowie: "8e03…"
+        var (outcome, stored) = store.Create(User.Email(), User.Name(), key, report);
         return outcome switch
         {
-            UpsertOutcome.Created => CreatedAtAction(nameof(Get), new { id }, stored!.ToDto(Request)),
-            UpsertOutcome.Updated => Ok(stored!.ToDto(Request)),
+            // nowe zgłoszenie albo powtórka: ta sama odpowiedź 201 z tym samym zgłoszeniem
+            CreateOutcome.Created or CreateOutcome.Repeated =>
+                CreatedAtAction(nameof(Get), new { id = stored!.Id }, stored.ToDto(Request)),
+            CreateOutcome.KeyReused => Problem(title: "Klucz użyty z inną treścią",
+                detail: "Ten Idempotency-Key był już użyty z inną treścią żądania. Nowe zgłoszenie = nowy klucz.",
+                statusCode: StatusCodes.Status422UnprocessableEntity),
+            CreateOutcome.InProgress => Problem(title: "Żądanie w toku",
+                detail: "Żądanie z tym Idempotency-Key jest właśnie przetwarzane. Ponów je za chwilę.",
+                statusCode: StatusCodes.Status409Conflict),
             _ => Problem(title: "Limit zgłoszeń", detail: $"Osiągnięto limit {storage.Value.MaxReportsPerTechnician} zgłoszeń na technika.",
                 statusCode: StatusCodes.Status409Conflict)
         };
     }
 
+    /// <summary>Aktualizacja istniejącego zgłoszenia (np. zmiana statusu).</summary>
+    /// <remarks>
+    /// Tylko aktualizacja — nowe zgłoszenie tworzy `POST /api/reports`. Ponowienie tego samego `PUT` daje ten sam stan.
+    /// `id` w treści musi być równe `id` z adresu (albo puste). Serwer ustawia `updatedAt`; `createdAt` się nie zmienia.
+    /// Tytuł jest przycinany (Trim) przed walidacją 3–80 znaków.
+    /// Status: serwer NIE pilnuje kolejności przejść — zapisuje stan z urządzenia (reguła „tylko do przodu” jest w aplikacji).
+    ///
+    ///     PUT /api/reports/3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f
+    ///     { "id": "3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f", "title": "Awaria pompy", "description": "Nie startuje",
+    ///       "priority": "High", "status": "InProgress", "createdAt": "2026-09-26T08:15:00+00:00" }
+    /// </remarks>
+    /// <param name="id" example="3f2c9a4e-8d1b-4c7a-9e55-0a1b2c3d4e5f">Identyfikator zgłoszenia (z odpowiedzi POST albo z listy).</param>
+    /// <param name="report">Dane zgłoszenia.</param>
+    /// <response code="200">Zaktualizowano zgłoszenie.</response>
+    /// <response code="400">Błędne dane (walidacja, niezgodne id).</response>
+    /// <response code="404">Brak zgłoszenia (u tego technika).</response>
+    [HttpPut("{id:guid}")]
+    [ProducesResponseType<ReportDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public ActionResult<ReportDto> Update(Guid id, [FromBody] ReportDto report)
+    {
+        if (report.Id != Guid.Empty && report.Id != id)
+            return Problem(title: "Niezgodny identyfikator", detail: "id w treści musi być równe id w adresie.", statusCode: StatusCodes.Status400BadRequest);
+
+        return store.Update(User.Email(), id, report) is { } updated ? updated.ToDto(Request) : NotFoundProblem();
+    }
+
     /// <summary>Wysłanie zdjęcia do zgłoszenia (multipart/form-data, pole <c>photo</c>).</summary>
     /// <remarks>
-    /// Zgłoszenie musi już istnieć (najpierw `PUT /api/reports/{id}`). Obsługiwane formaty: JPEG, PNG, WebP, HEIC
+    /// Zgłoszenie musi już istnieć (najpierw `POST /api/reports`, `id` z odpowiedzi). Obsługiwane formaty: JPEG, PNG, WebP, HEIC
     /// (rozpoznawane po zawartości). Limit rozmiaru: `Storage:MaxPhotoBytes` (domyślnie 5 MB). Ponowne wysłanie nadpisuje zdjęcie.
     ///
     ///     curl -X PUT -H "Authorization: Bearer $TOKEN" -F "photo=@usterka.jpg" http://localhost:5080/api/reports/{id}/photo

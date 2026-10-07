@@ -19,7 +19,8 @@ rejestracja urządzeń i wysyłka push przez **Firebase Admin SDK** (FCM HTTP v1
 | POST | `/api/auth/refresh` | `{ refreshToken }` → nowa para tokenów (refresh jednorazowy) |
 | GET | `/api/reports` | wszystkie zgłoszenia technika (od ostatnio zmienionego) |
 | GET | `/api/reports/{id}` | szczegóły |
-| PUT | `/api/reports/{id}` | idempotentny upsert (`201` nowe / `200` aktualizacja; `id` od aplikacji; `409`, gdy nowe zgłoszenie przekroczyłoby limit `Storage:MaxReportsPerTechnician`, domyślnie 500) |
+| POST | `/api/reports` | nowe zgłoszenie, nagłówek **`Idempotency-Key`** (wymagany; `id` nadaje serwer) → `201` ze zgłoszeniem; powtórka z tym samym kluczem → `201` z tym samym zgłoszeniem; ten sam klucz + inna treść → `422`; ten sam klucz przetwarzany równolegle → `409`; brak nagłówka → `400`; limit `Storage:MaxReportsPerTechnician` (domyślnie 500) → `409` |
+| PUT | `/api/reports/{id}` | aktualizacja istniejącego zgłoszenia (np. status) → `200`; brak zgłoszenia → `404` |
 | PUT / GET | `/api/reports/{id}/photo` | zdjęcie (multipart, pole `photo`; JPEG/PNG/WebP/HEIC, maks. 5 MB) |
 | POST | `/api/devices` | `{ token, platform: android\|ios }` — rejestracja do push |
 | DELETE | `/api/devices/{token}` | wyrejestrowanie (idempotentne, `204`) |
@@ -48,14 +49,43 @@ Przykładowy `ReportDto`:
 }
 ```
 
+## Nowe zgłoszenie: nagłówek `Idempotency-Key`
+
+Standard IETF „The Idempotency-Key HTTP Header Field”. Problem: aplikacja wysłała `POST`, serwer zapisał
+zgłoszenie, ale odpowiedź zginęła (zasięg) — aplikacja nie wie, czy się udało, więc ponawia. Bez klucza powstałby duplikat.
+
+- **Aplikacja** generuje klucz (UUID) **raz** — przy zapisie niewysłanego zgłoszenia w telefonie — i wysyła go
+  przy **każdej** próbie (także po restarcie aplikacji): `Idempotency-Key: "8e03978e-40d5-43e8-bc93-6894a57f9324"`
+  (wg standardu napis w cudzysłowie; serwer przyjmuje też wartość bez cudzysłowu, maks. 100 znaków).
+- **Serwer** trzyma klucze w tabeli `IdempotencyKeys`: technik + klucz (klucz główny, unikalny), skrót SHA-256 treści
+  żądania, wynik (id utworzonego zgłoszenia), data. Pierwsze żądanie zapisuje zgłoszenie i klucz w jednej transakcji
+  (`SaveChanges`). Powtórka z tą samą treścią zwraca zapisany wynik (`201`, to samo zgłoszenie, bez drugiego zapisu);
+  ta sama wartość klucza z inną treścią → `422`; dwa równoległe żądania z tym samym kluczem → drugie dostaje `409`
+  (naruszenie unikalności klucza w bazie) i może ponowić. Brak nagłówka → `400` (ProblemDetails).
+- Klucz jest osobny dla każdego technika. **Sprzątanie:** klucze starsze niż 24 h są usuwane przy okazji każdego
+  `POST /api/reports` (jedno `DELETE … WHERE CreatedAt < teraz − 24 h`, bez crona); po tym czasie ten sam klucz działa jak nowy.
+- Aktualizacja istniejącego zgłoszenia to `PUT /api/reports/{id}` (ten sam stan przy powtórce — PUT jest idempotentny
+  z natury), zdjęcie: `PUT /api/reports/{id}/photo` z `id` z odpowiedzi `POST`.
+
+```bash
+curl -X POST "$BASE/api/reports" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: "8e03978e-40d5-43e8-bc93-6894a57f9324"' \
+  -d '{"title":"Awaria pompy","priority":"High","status":"New","createdAt":"2026-09-26T08:15:00+00:00"}'
+```
+
 ## Baza danych
 
 PostgreSQL przez EF Core (Npgsql). Tabele: `Technicians`, `Reports` (klucz: e-mail technika + id), `Devices`,
-`RefreshTokens`. Zdjęcia leżą na dysku (`Storage:DataDirectory/photos`), w bazie tylko ich nazwa i typ.
+`RefreshTokens`, `IdempotencyKeys` (klucz: e-mail technika + klucz). Zdjęcia leżą na dysku (`Storage:DataDirectory/photos`), w bazie tylko ich nazwa i typ.
 
 Schemat tworzy `Database.EnsureCreated()` przy starcie API — **bez migracji EF**. To najprostsze rozwiązanie dla
 danych szkoleniowych: przy zmianie modelu usuwa się tabele (albo całą bazę) i API zakłada je od nowa, puste.
 Projekt produkcyjny używałby migracji (`dotnet ef migrations add …`), żeby zmieniać schemat bez utraty danych.
+
+Wyjątek: tabela `IdempotencyKeys` doszła, gdy baza produkcyjna już istniała, a `EnsureCreated` nie zmienia istniejącej
+bazy. Dlatego przy starcie, po `EnsureCreated`, API wykonuje jedno `CREATE TABLE IF NOT EXISTS "IdempotencyKeys" …`
+(`FieldReportDbContext.CreateIdempotencyKeysTableIfMissing`): w starej bazie zakłada brakującą tabelę, w nowej (gdzie
+założył ją już `EnsureCreated`) nic nie robi. Danych nie usuwa — prościej niż wprowadzać migracje EF dla jednej tabeli.
 
 Connection string tylko ze środowiska: `ConnectionStrings__FieldReport` (lokalnie ustawiony w
 `Properties/launchSettings.json` na bazę deweloperską, na serwerze w pliku env).

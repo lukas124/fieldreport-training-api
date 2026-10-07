@@ -9,7 +9,11 @@ namespace FieldReport.Api.Data;
 
 public sealed record TechnicianInfo(string Email, string Name, int ReportCount, IReadOnlyList<Device> Devices);
 
-public enum UpsertOutcome { Created, Updated, LimitExceeded }
+/// <summary>
+/// Wynik POST z kluczem idempotencji: Created = nowe zgłoszenie, Repeated = powtórka (to samo zgłoszenie),
+/// KeyReused = ten sam klucz z inną treścią, InProgress = ten sam klucz zapisywany równolegle, LimitExceeded = limit zgłoszeń.
+/// </summary>
+public enum CreateOutcome { Created, Repeated, KeyReused, InProgress, LimitExceeded }
 
 /// <summary>
 /// Operacje na danych API: technicy, zgłoszenia, urządzenia i refresh tokeny w PostgreSQL (EF Core),
@@ -19,6 +23,9 @@ public enum UpsertOutcome { Created, Updated, LimitExceeded }
 public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOptions<StorageOptions> options, TimeProvider time)
 {
     private readonly StorageOptions _options = options.Value;
+
+    /// <summary>Jak długo pamiętamy klucz idempotencji (potem ten sam klucz działa jak nowy).</summary>
+    public static readonly TimeSpan IdempotencyKeyLifetime = TimeSpan.FromHours(24);
 
     public static string Normalize(string email) => email.Trim().ToLowerInvariant();
 
@@ -51,31 +58,39 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
     public Report? GetReport(string email, Guid id) =>
         db.Reports.AsNoTracking().FirstOrDefault(r => r.TechnicianEmail == Normalize(email) && r.Id == id);
 
-    /// <summary>Idempotentny upsert: to samo <paramref name="id"/> zawsze nadpisuje ten sam rekord technika.</summary>
-    public (UpsertOutcome Outcome, Report? Report) Upsert(string email, string name, Guid id, ReportDto dto)
+    /// <summary>
+    /// Nowe zgłoszenie z kluczem idempotencji (POST /api/reports). Id nadaje serwer.
+    /// Pierwsze żądanie: zgłoszenie i klucz zapisują się razem. Powtórka z tym samym kluczem i tą samą treścią
+    /// zwraca zapisane zgłoszenie (bez drugiego zapisu); ten sam klucz z inną treścią → KeyReused;
+    /// ten sam klucz zapisany w tej chwili przez inne żądanie → InProgress.
+    /// </summary>
+    public (CreateOutcome Outcome, Report? Report) Create(string email, string name, string idempotencyKey, ReportDto dto)
     {
         var key = Normalize(email);
-        var existing = db.Reports.FirstOrDefault(r => r.TechnicianEmail == key && r.Id == id);
-        if (existing is not null)
+        var requestHash = Hash($"{dto.Title}|{dto.Description}|{dto.Priority}|{dto.Status}|{dto.CreatedAt:O}");
+
+        // klucze starsze niż doba usuwamy przy okazji — tyle czasu wystarcza na ponowienia z aplikacji
+        var expired = Now() - IdempotencyKeyLifetime;
+        db.IdempotencyKeys.Where(k => k.CreatedAt < expired).ExecuteDelete();
+
+        // klucz już zapisany = powtórka żądania: nic nie zapisujemy, zwracamy wynik pierwszego żądania
+        var saved = db.IdempotencyKeys.AsNoTracking().FirstOrDefault(k => k.TechnicianEmail == key && k.Key == idempotencyKey);
+        if (saved is not null)
         {
-            existing.Title = dto.Title;
-            existing.Description = dto.Description;
-            existing.Priority = dto.Priority;
-            existing.Status = dto.Status;
-            existing.UpdatedAt = Now();
-            db.SaveChanges();
-            return (UpsertOutcome.Updated, existing);
+            return saved.RequestHash == requestHash
+                ? (CreateOutcome.Repeated, GetReport(email, saved.ReportId))
+                : (CreateOutcome.KeyReused, null);
         }
 
         GetOrAddTechnician(email, name);
         if (db.Reports.Count(r => r.TechnicianEmail == key) >= _options.MaxReportsPerTechnician)
-            return (UpsertOutcome.LimitExceeded, null);
+            return (CreateOutcome.LimitExceeded, null);
 
         var now = Now();
-        var created = new Report
+        var report = new Report
         {
             TechnicianEmail = key,
-            Id = id,
+            Id = Guid.NewGuid(),
             Title = dto.Title,
             Description = dto.Description,
             Priority = dto.Priority,
@@ -83,18 +98,36 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
             CreatedAt = dto.CreatedAt == default ? now : Microseconds(dto.CreatedAt.ToUniversalTime()),
             UpdatedAt = now
         };
-        db.Reports.Add(created);
+        db.Reports.Add(report);
+        db.IdempotencyKeys.Add(new IdempotencyKey
+        {
+            TechnicianEmail = key, Key = idempotencyKey, RequestHash = requestHash, ReportId = report.Id, CreatedAt = now
+        });
         try
         {
-            db.SaveChanges();
-            return (UpsertOutcome.Created, created);
+            db.SaveChanges(); // jedna transakcja: zgłoszenie i klucz zapisują się razem albo wcale
+            return (CreateOutcome.Created, report);
         }
         catch (DbUpdateException)
         {
-            // ten sam PUT przyszedł dwa razy jednocześnie i drugi zdążył zapisać rekord — wtedy to aktualizacja
+            // ten sam klucz zapisało w tej chwili równoległe żądanie (klucz w bazie jest unikalny) — klient ponowi później
             db.ChangeTracker.Clear();
-            return Upsert(email, name, id, dto);
+            return (CreateOutcome.InProgress, null);
         }
+    }
+
+    /// <summary>Aktualizacja istniejącego zgłoszenia (PUT). Brak zgłoszenia u technika → null.</summary>
+    public Report? Update(string email, Guid id, ReportDto dto)
+    {
+        var report = db.Reports.FirstOrDefault(r => r.TechnicianEmail == Normalize(email) && r.Id == id);
+        if (report is null) return null;
+        report.Title = dto.Title;
+        report.Description = dto.Description;
+        report.Priority = dto.Priority;
+        report.Status = dto.Status;
+        report.UpdatedAt = Now();
+        db.SaveChanges();
+        return report;
     }
 
     /// <summary>Nowe zgłoszenie od dyspozytora (status New, identyfikator nadaje serwer).</summary>
@@ -281,7 +314,7 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
     public static string TechnicianKey(string email) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Normalize(email))))[..16].ToLowerInvariant();
 
-    private static string Hash(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     private static void TryDelete(string path)
     {

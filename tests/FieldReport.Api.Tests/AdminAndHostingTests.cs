@@ -13,7 +13,7 @@ public sealed class AdminResetTests
     {
         using var factory = new ApiFactory();
         var (client, _) = await Api.AuthorizedClientAsync(factory);
-        await Api.PutReportAsync(client, Api.NewReport());
+        await Api.CreateReportAsync(client, Api.NewReport());
         var anonymous = factory.CreateClient();
 
         var without = await anonymous.PostAsync("api/admin/reset", null);
@@ -31,8 +31,8 @@ public sealed class AdminResetTests
     {
         using var factory = new ApiFactory();
         var (client, _) = await Api.AuthorizedClientAsync(factory);
-        await Api.PutReportAsync(client, Api.NewReport());
-        await Api.PutReportAsync(client, Api.NewReport());
+        await Api.CreateReportAsync(client, Api.NewReport());
+        await Api.CreateReportAsync(client, Api.NewReport());
 
         var request = new HttpRequestMessage(HttpMethod.Post, "api/admin/reset");
         request.Headers.Add("X-Admin-Key", ApiFactory.AdminKey);
@@ -51,8 +51,8 @@ public sealed class AdminResetTests
         using var factory = new ApiFactory();
         var (a, emailA) = await Api.AuthorizedClientAsync(factory);
         var (b, _) = await Api.AuthorizedClientAsync(factory);
-        await Api.PutReportAsync(a, Api.NewReport());
-        await Api.PutReportAsync(b, Api.NewReport());
+        await Api.CreateReportAsync(a, Api.NewReport());
+        await Api.CreateReportAsync(b, Api.NewReport());
 
         var request = new HttpRequestMessage(HttpMethod.Post, $"api/admin/reset?technicianEmail={Uri.EscapeDataString(emailA)}");
         request.Headers.Add("X-Admin-Key", ApiFactory.AdminKey);
@@ -124,7 +124,7 @@ public sealed class HostingTests
         client.DefaultRequestHeaders.Authorization = new("Bearer", tokens.AccessToken);
         var report = Api.NewReport();
 
-        var put = await Api.PutReportAsync(client, report);
+        var put = await Api.CreateReportAsync(client, report);
         var photo = await Api.ReadAsync<ReportDto>(await client.PutAsync($"api/reports/{report.Id}/photo", Api.PhotoContent(Api.FakeJpeg())));
 
         Assert.That(put.Headers.Location!.ToString(), Does.Contain($"{Prefix}/api/reports/{report.Id}"));

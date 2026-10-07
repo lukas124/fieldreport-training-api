@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using FieldReport.Api.Contracts;
+using FieldReport.Api.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace FieldReport.Api.Tests;
 
@@ -17,21 +19,21 @@ public sealed class ValidationRulesTests
     [TestCase("ab\n\n", HttpStatusCode.BadRequest)]
     [TestCase("   ", HttpStatusCode.BadRequest)]
     [TestCase("  abc  ", HttpStatusCode.Created)]
-    public async Task Put_title_length_is_validated_after_trim(string title, HttpStatusCode expected)
+    public async Task Post_title_length_is_validated_after_trim(string title, HttpStatusCode expected)
     {
         var (client, _) = await Api.AuthorizedClientAsync(_factory);
-        var response = await Api.PutReportAsync(client, Api.NewReport(title: title));
+        var response = await Api.CreateReportAsync(client, Api.NewReport(title: title));
         Assert.That(response.StatusCode, Is.EqualTo(expected), await response.Content.ReadAsStringAsync());
         if (expected == HttpStatusCode.Created)
             Assert.That((await Api.ReadAsync<ReportDto>(response)).Title, Is.EqualTo("abc"));
     }
 
     [Test]
-    public async Task Put_title_80_chars_with_surrounding_spaces_is_accepted_and_81_rejected()
+    public async Task Post_title_80_chars_with_surrounding_spaces_is_accepted_and_81_rejected()
     {
         var (client, _) = await Api.AuthorizedClientAsync(_factory);
-        var ok = await Api.PutReportAsync(client, Api.NewReport(title: " " + new string('x', 80) + " "));
-        var tooLong = await Api.PutReportAsync(client, Api.NewReport(title: " " + new string('x', 81) + " "));
+        var ok = await Api.CreateReportAsync(client, Api.NewReport(title: " " + new string('x', 80) + " "));
+        var tooLong = await Api.CreateReportAsync(client, Api.NewReport(title: " " + new string('x', 81) + " "));
         Assert.That(ok.StatusCode, Is.EqualTo(HttpStatusCode.Created));
         Assert.That((await Api.ReadAsync<ReportDto>(ok)).Title, Has.Length.EqualTo(80));
         Assert.That(tooLong.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
@@ -48,15 +50,21 @@ public sealed class ValidationRulesTests
             Assert.That((await Api.ReadAsync<DispatcherResult>(response)).Reports[0].Report.Title, Is.EqualTo("xyz"));
     }
 
-    // to samo id u dwóch techników: dyspozytor musi wskazać technika
+    // to samo id u dwóch techników (np. dane sprzed nadawania id przez serwer): dyspozytor musi wskazać technika
     [Test]
     public async Task Patch_status_with_id_shared_by_two_technicians_requires_email_and_touches_only_target()
     {
         var (a, emailA) = await Api.AuthorizedClientAsync(_factory);
-        var (b, _) = await Api.AuthorizedClientAsync(_factory);
-        var id = Guid.NewGuid();
-        await Api.PutReportAsync(a, Api.NewReport(id));
-        await Api.PutReportAsync(b, Api.NewReport(id));
+        var (b, emailB) = await Api.AuthorizedClientAsync(_factory);
+        var report = Api.NewReport();
+        await Api.CreateReportAsync(a, report);
+        var id = report.Id;
+        using (var db = new FieldReportDbContext(new DbContextOptionsBuilder<FieldReportDbContext>().UseNpgsql(_factory.ConnectionString).Options))
+        {
+            // przez API tego się już nie da zrobić (id nadaje serwer), więc kopię u technika B wstawiamy wprost do bazy
+            db.Reports.Add(new Report { TechnicianEmail = emailB, Id = id, Title = "Kopia", CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+            db.SaveChanges();
+        }
         var dispatcher = _factory.CreateClient();
 
         var ambiguous = await dispatcher.PatchAsJsonAsync($"api/dispatcher/reports/{id}/status", new { status = "Done" });
@@ -81,7 +89,7 @@ public sealed class ValidationRulesTests
     {
         var (client, _) = await Api.AuthorizedClientAsync(_factory);
         var report = Api.NewReport();
-        await Api.PutReportAsync(client, report);
+        await Api.CreateReportAsync(client, report);
 
         var response = await client.PutAsync($"api/reports/{report.Id}/photo", Api.PhotoContent(Api.FakeJpeg(), field: "zdjecie"));
 
@@ -96,7 +104,7 @@ public sealed class ValidationRulesTests
         var (client, _) = await Api.AuthorizedClientAsync(_factory);
         var report = Api.NewReport();
         report.Status = ReportStatus.Done;
-        await Api.PutReportAsync(client, report);
+        await Api.CreateReportAsync(client, report);
         report.Status = ReportStatus.New;
         Assert.That((await Api.PutReportAsync(client, report)).StatusCode, Is.EqualTo(HttpStatusCode.OK));
 

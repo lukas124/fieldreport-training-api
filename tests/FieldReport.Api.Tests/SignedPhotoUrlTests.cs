@@ -16,7 +16,7 @@ public sealed class SignedPhotoUrlTests
     {
         var (client, _) = await Api.AuthorizedClientAsync(factory);
         var report = Api.NewReport();
-        await Api.PutReportAsync(client, report);
+        await Api.CreateReportAsync(client, report);
         var photo = Api.FakeJpeg(1500);
         var response = await client.PutAsync($"api/reports/{report.Id}/photo", Api.PhotoContent(photo));
         return (await Api.ReadAsync<ReportDto>(response), photo);
@@ -41,7 +41,7 @@ public sealed class SignedPhotoUrlTests
     {
         var (client, _) = await Api.AuthorizedClientAsync(_factory);
         var report = Api.NewReport();
-        await Api.PutReportAsync(client, report);
+        await Api.CreateReportAsync(client, report);
         await client.PutAsync($"api/reports/{report.Id}/photo", Api.PhotoContent(Api.FakeJpeg()));
 
         var list = await client.GetFromJsonAsync<List<ReportDto>>("api/reports", Api.Json);
