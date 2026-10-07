@@ -285,7 +285,7 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
 
         var emails = technicians.Select(t => t.Email).ToList();
         var reportCount = reports.Count();
-        technicians.ExecuteDelete(); // kaskadowo: zgłoszenia, urządzenia, refresh tokeny
+        technicians.ExecuteDelete(); // kaskadowo: zgłoszenia, urządzenia, refresh tokeny, klucze idempotencji
         foreach (var e in emails) TryDeleteDirectory(Path.Combine(paths.PhotosDirectory, TechnicianKey(e)));
         return (reportCount, emails.Count);
     }
