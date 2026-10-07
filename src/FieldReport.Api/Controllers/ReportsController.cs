@@ -42,8 +42,10 @@ public sealed class ReportsController(DataStore store, PhotoUrlSigner photoUrls,
     /// zgubionej odpowiedzi nie tworzy duplikatu:
     ///
     /// - pierwsze żądanie z kluczem → zapis zgłoszenia i klucza (razem), `201` ze zgłoszeniem i jego `id`;
-    /// - ten sam klucz i ta sama treść → `201` z tym samym zgłoszeniem (bez drugiego zapisu);
-    /// - ten sam klucz i inna treść → `422`;
+    /// - ten sam klucz i ta sama treść → `201` z tym samym zgłoszeniem w stanie z serwera (bez drugiego zapisu);
+    /// - ten sam klucz i inna treść → `422`. Porównywane są pola ustalane przy tworzeniu: `title`, `description`,
+    ///   `priority`, `createdAt`. **Status nie** — mógł się zmienić w telefonie przed ponowieniem; aplikacja wysyła
+    ///   go potem przez `PUT`, gdy różni się od statusu w odpowiedzi;
     /// - ten sam klucz przetwarzany w tej samej chwili przez inne żądanie → `409` (ponów później).
     ///
     /// Wartość wg standardu to napis w cudzysłowie (`"…"`); serwer przyjmuje też wartość bez cudzysłowu.
@@ -61,7 +63,7 @@ public sealed class ReportsController(DataStore store, PhotoUrlSigner photoUrls,
     /// <response code="201">Utworzono zgłoszenie (albo powtórka z tym samym kluczem — to samo zgłoszenie).</response>
     /// <response code="400">Brak nagłówka Idempotency-Key albo błędne dane (walidacja).</response>
     /// <response code="409">Ten sam klucz jest właśnie przetwarzany przez inne żądanie (ponów później) albo przekroczony limit zgłoszeń na technika (`Storage:MaxReportsPerTechnician`, domyślnie 500).</response>
-    /// <response code="422">Ten klucz był już użyty z inną treścią żądania.</response>
+    /// <response code="422">Ten klucz był już użyty z inną treścią żądania (tytuł, opis, priorytet albo data utworzenia).</response>
     [HttpPost]
     [ProducesResponseType<ReportDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]

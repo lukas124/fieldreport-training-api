@@ -84,6 +84,25 @@ public sealed class ReportsTests
     }
 
     [Test]
+    public async Task Post_repeated_with_other_status_returns_saved_report_not_422()
+    {
+        // odpowiedź na POST zginęła, technik zmienił status w telefonie, aplikacja ponawia POST z tym samym kluczem
+        var (client, _) = await Api.AuthorizedClientAsync(_factory);
+        var report = Api.NewReport();
+        var key = NewKey();
+        var first = await Api.ReadAsync<ReportDto>(await Api.PostReportAsync(client, report, key));
+
+        report.Status = ReportStatus.InProgress;
+        var repeated = await Api.PostReportAsync(client, report, key);
+
+        Assert.That(repeated.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+        var saved = await Api.ReadAsync<ReportDto>(repeated);
+        Assert.That(saved.Id, Is.EqualTo(first.Id));
+        Assert.That(saved.Status, Is.EqualTo(ReportStatus.New), "zapisany stan — nowy status aplikacja wysyła przez PUT");
+        Assert.That(await client.GetFromJsonAsync<List<ReportDto>>("api/reports", Api.Json), Has.Count.EqualTo(1));
+    }
+
+    [Test]
     public async Task Post_without_idempotency_key_returns_400_problem_details()
     {
         var (client, _) = await Api.AuthorizedClientAsync(_factory);

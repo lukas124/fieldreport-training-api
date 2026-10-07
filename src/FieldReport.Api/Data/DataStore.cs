@@ -61,13 +61,17 @@ public sealed class DataStore(FieldReportDbContext db, StoragePaths paths, IOpti
     /// <summary>
     /// Nowe zgłoszenie z kluczem idempotencji (POST /api/reports). Id nadaje serwer.
     /// Pierwsze żądanie: zgłoszenie i klucz zapisują się razem. Powtórka z tym samym kluczem i tą samą treścią
-    /// zwraca zapisane zgłoszenie (bez drugiego zapisu); ten sam klucz z inną treścią → KeyReused;
+    /// (tytuł, opis, priorytet, data utworzenia — bez statusu) zwraca zapisane zgłoszenie (bez drugiego zapisu);
+    /// ten sam klucz z inną treścią → KeyReused;
     /// ten sam klucz zapisany w tej chwili przez inne żądanie → InProgress.
     /// </summary>
     public (CreateOutcome Outcome, Report? Report) Create(string email, string name, string idempotencyKey, ReportDto dto)
     {
         var key = Normalize(email);
-        var requestHash = Hash($"{dto.Title}|{dto.Description}|{dto.Priority}|{dto.Status}|{dto.CreatedAt:O}");
+        // Klucz dotyczy UTWORZENIA zgłoszenia, więc skrót liczymy tylko z pól ustalanych przy tworzeniu (aplikacja
+        // ich potem nie zmienia). Statusu w skrócie nie ma: technik może zmienić go w telefonie, zanim aplikacja
+        // dostanie odpowiedź na POST — ponowiony POST z nowym statusem to nadal powtórka, a status wyśle ona potem przez PUT.
+        var requestHash = Hash($"{dto.Title}|{dto.Description}|{dto.Priority}|{dto.CreatedAt:O}");
 
         // klucze starsze niż doba usuwamy przy okazji — tyle czasu wystarcza na ponowienia z aplikacji
         var expired = Now() - IdempotencyKeyLifetime;

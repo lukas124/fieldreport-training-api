@@ -57,7 +57,10 @@ public sealed class IdempotencyKey
     public string TechnicianEmail { get; set; } = "";
     public string Key { get; set; } = "";
 
-    /// <summary>Skrót SHA-256 treści żądania: ten sam klucz z inną treścią to błąd klienta (422).</summary>
+    /// <summary>
+    /// Skrót SHA-256 pól ustalanych przy tworzeniu (tytuł, opis, priorytet, data utworzenia — bez statusu, który może
+    /// się zmienić przed ponowieniem): ten sam klucz z inną treścią to błąd klienta (422).
+    /// </summary>
     public string RequestHash { get; set; } = "";
 
     /// <summary>Wynik pierwszego żądania: Id utworzonego zgłoszenia (powtórka zwraca to zgłoszenie).</summary>

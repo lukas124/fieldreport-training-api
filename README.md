@@ -58,9 +58,9 @@ zgłoszenie, ale odpowiedź zginęła (zasięg) — aplikacja nie wie, czy się 
   przy **każdej** próbie (także po restarcie aplikacji): `Idempotency-Key: "8e03978e-40d5-43e8-bc93-6894a57f9324"`
   (wg standardu napis w cudzysłowie; serwer przyjmuje też wartość bez cudzysłowu, maks. 100 znaków).
 - **Serwer** trzyma klucze w tabeli `IdempotencyKeys`: technik + klucz (klucz główny, unikalny), skrót SHA-256 treści
-  żądania, wynik (id utworzonego zgłoszenia), data. Pierwsze żądanie zapisuje zgłoszenie i klucz w jednej transakcji
+  żądania (pola ustalane przy tworzeniu), wynik (id utworzonego zgłoszenia), data. Pierwsze żądanie zapisuje zgłoszenie i klucz w jednej transakcji
   (`SaveChanges`). Powtórka z tą samą treścią zwraca zapisany wynik (`201`, to samo zgłoszenie, bez drugiego zapisu);
-  ta sama wartość klucza z inną treścią → `422`; dwa równoległe żądania z tym samym kluczem → drugie dostaje `409`
+  ta sama wartość klucza z inną treścią (tytuł, opis, priorytet, data utworzenia — **bez statusu**: mógł się zmienić w telefonie przed ponowieniem, aplikacja wysyła go potem przez `PUT`) → `422`; dwa równoległe żądania z tym samym kluczem → drugie dostaje `409`
   (naruszenie unikalności klucza w bazie) i może ponowić. Brak nagłówka → `400` (ProblemDetails).
 - Klucz jest osobny dla każdego technika. **Sprzątanie:** klucze starsze niż 24 h są usuwane przy okazji każdego
   `POST /api/reports` (jedno `DELETE … WHERE CreatedAt < teraz − 24 h`, bez crona); po tym czasie ten sam klucz działa jak nowy.
